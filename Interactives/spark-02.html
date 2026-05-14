@@ -1,0 +1,2085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spark — Tasks, Lazy Evaluation, and the Driver Killer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:           #0a0e1a;
+    --surface:      #131826;
+    --surface-2:    #1c2333;
+    --surface-3:    #252d40;
+    --border:       #2a3447;
+    --border-bright:#3a4660;
+    --text:         #e8ecef;
+    --text-2:       #8b95a6;
+    --text-3:       #5a6478;
+    --driver:       #e25a1c;
+    --driver-glow:  rgba(226,90,28,.35);
+    --executor:     #00d9b8;
+    --executor-glow:rgba(0,217,184,.3);
+    --data:         #ffc857;
+    --data-glow:    rgba(255,200,87,.3);
+    --result:       #4ade80;
+    --shuffle:      #c084fc;
+    --danger:       #ef4444;
+    --danger-glow:  rgba(239,68,68,.4);
+    --warning:      #fbbf24;
+    --info:         #60a5fa;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --sans: 'Sora', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-weight: 300;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  body {
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(226,90,28,.08), transparent),
+      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(239,68,68,.05), transparent),
+      var(--bg);
+    background-attachment: fixed;
+    transition: background .3s;
+  }
+  body.shake {
+    animation: shake .5s cubic-bezier(.36,.07,.19,.97);
+  }
+  @keyframes shake {
+    10%,90% { transform: translateX(-2px); }
+    20%,80% { transform: translateX(3px); }
+    30%,50%,70% { transform: translateX(-5px); }
+    40%,60% { transform: translateX(5px); }
+  }
+
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px);
+    background-size: 32px 32px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 48px 32px 80px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ---- Header ---- */
+  header { margin-bottom: 40px; border-bottom: 1px solid var(--border); padding-bottom: 32px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .25em;
+    text-transform: uppercase;
+    color: var(--driver);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .eyebrow::before { content: ''; width: 24px; height: 1px; background: var(--driver); }
+  h1 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(34px, 4.8vw, 52px);
+    line-height: 1.05;
+    letter-spacing: -.03em;
+    margin-bottom: 16px;
+  }
+  h1 .accent { color: var(--driver); }
+  h1 .danger { color: var(--danger); }
+  .lead {
+    color: var(--text-2);
+    font-size: 17px;
+    max-width: 720px;
+    font-weight: 300;
+  }
+  .lead .term { color: var(--text); font-weight: 400; }
+
+  /* ---- Tabs ---- */
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+  .tab {
+    flex: 1 1 auto; min-width: 0;
+    padding: 12px 18px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .04em;
+    background: transparent;
+    color: var(--text-2);
+    border: 1px solid transparent;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: all .2s;
+    text-align: left;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .tab:hover { color: var(--text); background: var(--surface-2); }
+  .tab.active { background: var(--surface-3); color: var(--text); border-color: var(--border-bright); }
+  .tab-num {
+    font-size: 10px;
+    color: var(--text-3);
+    padding: 2px 6px;
+    background: var(--bg);
+    border-radius: 4px;
+  }
+  .tab.active .tab-num { background: var(--driver); color: white; }
+
+  /* ---- Main layout ---- */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 980px) { .main { grid-template-columns: 1fr; } }
+
+  /* ---- Canvas ---- */
+  .canvas {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+    min-height: 600px;
+    position: relative;
+    overflow: hidden;
+  }
+  .canvas-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .canvas-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-2);
+    letter-spacing: .05em;
+  }
+  .canvas-title .label { color: var(--text); font-weight: 500; }
+  .scenario-status {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .status-dot {
+    width: 6px; height: 6px;
+    background: var(--text-3);
+    border-radius: 50%;
+    transition: all .3s;
+  }
+  .scenario-status.running .status-dot {
+    background: var(--driver);
+    box-shadow: 0 0 8px var(--driver-glow);
+    animation: pulse 1s infinite;
+  }
+  .scenario-status.error .status-dot {
+    background: var(--danger);
+    box-shadow: 0 0 8px var(--danger-glow);
+  }
+  @keyframes pulse { 0%,100% {opacity:1} 50% {opacity:.4} }
+
+  /* Scenario container */
+  .scenario { display: none; }
+  .scenario.active { display: block; }
+
+  /* =================================================================
+     SCENARIO 1: SLOTS & TASKS
+     ================================================================= */
+  .stage-slots {
+    position: relative;
+  }
+  .task-queue {
+    background: var(--surface-2);
+    border: 1px dashed var(--border-bright);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 20px;
+  }
+  .queue-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--text-3);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .queue-tasks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 36px;
+  }
+  .task-chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--surface-3);
+    border: 1px solid var(--border-bright);
+    color: var(--data);
+    padding: 5px 10px;
+    border-radius: 5px;
+    transition: all .3s;
+    min-width: 38px;
+    text-align: center;
+  }
+  .task-chip.dispatched { opacity: 0; transform: scale(.6); }
+  .task-chip.done { background: rgba(74,222,128,.1); color: var(--result); border-color: rgba(74,222,128,.3); }
+
+  .executor-row-slots {
+    display: grid;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .executor-with-slots {
+    background: var(--surface-2);
+    border: 1.5px solid var(--executor);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .exec-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .exec-name {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--executor);
+    letter-spacing: .1em;
+  }
+  .exec-cores {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+  }
+  .slots-grid {
+    display: grid;
+    gap: 6px;
+  }
+  .slot {
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 6px;
+    min-height: 64px;
+    text-align: center;
+    transition: all .3s;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    position: relative;
+    overflow: hidden;
+  }
+  .slot-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+    letter-spacing: .1em;
+  }
+  .slot-task {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--data);
+  }
+  .slot.busy {
+    background: rgba(0,217,184,.08);
+    border-color: var(--executor);
+    box-shadow: 0 0 12px var(--executor-glow);
+  }
+  .slot.busy .slot-label { color: var(--executor); }
+  .slot.busy::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(0,217,184,.15), transparent);
+    animation: slotProgress 1s linear infinite;
+  }
+  @keyframes slotProgress {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(100%); }
+  }
+  .slot.done {
+    background: rgba(74,222,128,.06);
+    border-color: rgba(74,222,128,.3);
+  }
+  .slot.done .slot-label { color: var(--result); }
+
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    margin-top: 16px;
+    padding: 14px;
+    background: var(--surface-2);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+  .stat {
+    text-align: center;
+  }
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .stat-value {
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .stat-value.highlight { color: var(--driver); }
+  .stat-value.good { color: var(--result); }
+
+  /* =================================================================
+     SCENARIO 2: LAZY EVALUATION
+     ================================================================= */
+  .stage-lazy {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 720px) {
+    .stage-lazy { grid-template-columns: 1fr; }
+  }
+  .pipeline-panel, .dag-panel {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    min-height: 360px;
+    display: flex;
+    flex-direction: column;
+  }
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--text-3);
+    text-transform: uppercase;
+  }
+  .panel-status {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--surface-3);
+    color: var(--text-2);
+  }
+  .panel-status.idle      { color: var(--text-3); }
+  .panel-status.planned   { color: var(--warning); background: rgba(251,191,36,.08); }
+  .panel-status.executing { color: var(--driver); background: rgba(226,90,28,.1); animation: pulse 1s infinite; }
+  .panel-status.done      { color: var(--result); background: rgba(74,222,128,.08); }
+
+  .pipeline-code {
+    font-family: var(--mono);
+    font-size: 13px;
+    flex: 1;
+    line-height: 1.8;
+    overflow-y: auto;
+  }
+  .code-line {
+    padding: 2px 6px;
+    border-radius: 3px;
+    transition: all .3s;
+    margin-left: 12px;
+    color: var(--text-2);
+  }
+  .code-line.first { margin-left: 0; color: var(--text); }
+  .code-line.transformation { color: var(--text); }
+  .code-line.transformation .method { color: var(--info); }
+  .code-line.action { color: var(--text); border-left: 2px solid var(--driver); padding-left: 8px; margin-left: 4px; }
+  .code-line.action .method { color: var(--driver); font-weight: 700; }
+  .code-line.action.danger .method { color: var(--danger); }
+  .code-line.executing { background: rgba(226,90,28,.1); }
+  .code-line.complete { color: var(--result); }
+  .code-line.complete .method { color: var(--result); }
+  .code-line .args { color: var(--text-3); }
+  .pipeline-empty {
+    color: var(--text-3);
+    font-style: italic;
+    text-align: center;
+    margin-top: 40px;
+    font-family: var(--sans);
+    font-size: 13px;
+  }
+
+  .pipeline-footer {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .pipeline-time { color: var(--text); }
+  .pipeline-time.executing { color: var(--driver); }
+  .pipeline-time.done { color: var(--result); }
+
+  .dag-canvas {
+    flex: 1;
+    position: relative;
+    min-height: 260px;
+  }
+  .dag-canvas svg { width: 100%; height: 100%; }
+  .dag-node-rect {
+    fill: var(--surface-3);
+    stroke: var(--border-bright);
+    stroke-width: 1.5;
+    transition: all .3s;
+  }
+  .dag-node-rect.transformation { stroke: var(--info); }
+  .dag-node-rect.action         { stroke: var(--driver); fill: rgba(226,90,28,.05); }
+  .dag-node-rect.action.danger  { stroke: var(--danger); fill: rgba(239,68,68,.05); }
+  .dag-node-rect.executing      { fill: rgba(226,90,28,.15); stroke: var(--driver); stroke-width: 2; }
+  .dag-node-rect.complete       { stroke: var(--result); fill: rgba(74,222,128,.06); }
+  .dag-node-text {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    fill: var(--text);
+    text-anchor: middle;
+    dominant-baseline: middle;
+  }
+  .dag-edge {
+    stroke: var(--border-bright);
+    stroke-width: 1.5;
+    fill: none;
+    marker-end: url(#dag-arrow);
+  }
+  .dag-edge.complete { stroke: var(--result); }
+
+  .op-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .op-group-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    margin-right: 6px;
+  }
+  .op-btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 7px 11px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-bright);
+    color: var(--text);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .op-btn:hover:not(:disabled) {
+    background: var(--surface-3);
+  }
+  .op-btn.transformation { border-color: var(--info); color: var(--info); }
+  .op-btn.transformation:hover:not(:disabled) { background: rgba(96,165,250,.08); }
+  .op-btn.action { border-color: var(--driver); color: var(--driver); }
+  .op-btn.action:hover:not(:disabled) { background: rgba(226,90,28,.08); }
+  .op-btn.action.danger { border-color: var(--danger); color: var(--danger); }
+  .op-btn.action.danger:hover:not(:disabled) { background: rgba(239,68,68,.08); }
+  .op-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  .op-divider {
+    width: 1px;
+    height: 22px;
+    background: var(--border);
+    margin: 0 6px;
+  }
+
+  .result-banner {
+    margin-top: 14px;
+    padding: 14px 16px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--result);
+    border-radius: 8px;
+    display: none;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .result-banner.show { display: block; }
+  .result-banner.danger { border-left-color: var(--danger); background: rgba(239,68,68,.05); }
+  .result-banner .key { color: var(--text-3); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+  .result-banner .val { color: var(--result); font-weight: 600; }
+  .result-banner.danger .val { color: var(--danger); }
+
+  /* =================================================================
+     SCENARIO 3: THE DRIVER KILLER
+     ================================================================= */
+  .stage-killer {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .driver-killer-node {
+    background: var(--surface-2);
+    border: 1.5px solid var(--driver);
+    border-radius: 12px;
+    padding: 16px 20px;
+    text-align: center;
+    transition: all .3s;
+  }
+  .driver-killer-node.warning {
+    border-color: var(--warning);
+    box-shadow: 0 0 24px rgba(251,191,36,.3);
+  }
+  .driver-killer-node.dead {
+    border-color: var(--danger);
+    background: rgba(239,68,68,.08);
+    box-shadow: 0 0 32px var(--danger-glow);
+  }
+  .killer-driver-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--driver);
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .driver-killer-node.dead .killer-driver-title { color: var(--danger); }
+  .driver-killer-node .node-title {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .heap-bar {
+    height: 28px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    margin-top: 8px;
+  }
+  .heap-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--result), var(--warning) 70%, var(--danger));
+    width: 0%;
+    transition: width .6s cubic-bezier(.4,0,.2,1);
+    position: relative;
+  }
+  .heap-fill.fast { transition: width .15s linear; }
+  .heap-label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    text-shadow: 0 0 4px rgba(0,0,0,.8);
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  .killer-executors {
+    display: grid;
+    gap: 12px;
+  }
+  .killer-exec {
+    background: var(--surface-2);
+    border: 1.5px solid var(--executor);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all .3s;
+  }
+  .killer-exec.sending {
+    border-color: var(--driver);
+    box-shadow: 0 0 12px var(--driver-glow);
+  }
+  .killer-exec-info {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+  }
+  .killer-exec-name {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--executor);
+    letter-spacing: .1em;
+  }
+  .killer-exec-size {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--data);
+    font-weight: 600;
+  }
+  .killer-exec-rows {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+  }
+  .killer-exec-flow {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .killer-exec-flow .arrow {
+    color: var(--driver);
+    font-weight: 700;
+  }
+
+  .op-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: all .15s;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: center;
+    text-align: left;
+  }
+  .op-card:hover:not(.disabled) {
+    border-color: var(--border-bright);
+    background: var(--surface-3);
+  }
+  .op-card.disabled { opacity: .4; cursor: not-allowed; }
+  .op-card-icon {
+    font-family: var(--mono);
+    font-size: 18px;
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .op-card.safe   .op-card-icon { background: rgba(74,222,128,.08); color: var(--result); }
+  .op-card.medium .op-card-icon { background: rgba(251,191,36,.08); color: var(--warning); }
+  .op-card.danger .op-card-icon { background: rgba(239,68,68,.1); color: var(--danger); }
+  .op-card-body { display: flex; flex-direction: column; gap: 2px; }
+  .op-card-name {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .op-card-desc {
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .op-card-badge {
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .op-card.safe   .op-card-badge { background: rgba(74,222,128,.1); color: var(--result); }
+  .op-card.medium .op-card-badge { background: rgba(251,191,36,.1); color: var(--warning); }
+  .op-card.danger .op-card-badge { background: rgba(239,68,68,.1); color: var(--danger); }
+
+  .op-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  /* OOM overlay */
+  .oom-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(10,14,26,.95);
+    z-index: 100;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    text-align: center;
+    backdrop-filter: blur(4px);
+  }
+  .oom-overlay.show { display: flex; animation: fadeIn .3s; }
+  @keyframes fadeIn { from {opacity:0} to {opacity:1} }
+  .oom-title {
+    font-family: var(--mono);
+    font-size: 22px;
+    color: var(--danger);
+    font-weight: 700;
+    margin-bottom: 8px;
+    letter-spacing: -.02em;
+  }
+  .oom-subtitle {
+    color: var(--text-2);
+    font-size: 14px;
+    margin-bottom: 20px;
+    max-width: 500px;
+  }
+  .oom-stack {
+    background: #050810;
+    border: 1px solid var(--danger);
+    border-radius: 8px;
+    padding: 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-2);
+    text-align: left;
+    max-width: 600px;
+    overflow-x: auto;
+    margin-bottom: 16px;
+  }
+  .oom-stack .err { color: var(--danger); }
+  .oom-stack .trace { color: var(--text-3); }
+  .oom-stack .file { color: var(--info); }
+
+  /* Particle (same as Part 1) */
+  .particle {
+    position: absolute;
+    width: 8px; height: 8px;
+    border-radius: 2px;
+    pointer-events: none;
+    z-index: 30;
+    transition: all .8s cubic-bezier(.4,.0,.2,1);
+  }
+  .particle.data    { background: var(--data);    box-shadow: 0 0 8px var(--data-glow); }
+  .particle.task    { background: var(--driver);  box-shadow: 0 0 8px var(--driver-glow); }
+  .particle.result  { background: var(--executor);box-shadow: 0 0 8px var(--executor-glow); }
+  .particle.huge    { background: var(--danger);  box-shadow: 0 0 10px var(--danger-glow); width: 12px; height: 12px; }
+
+  /* ---- Narration panel ---- */
+  .narration {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    min-height: 600px;
+  }
+  .narration-header { padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .narration-step {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--driver);
+    letter-spacing: .1em;
+    margin-bottom: 6px;
+  }
+  .narration-title {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .narration-body {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text-2);
+    margin-bottom: 20px;
+  }
+  .narration-body p { margin-bottom: 12px; }
+  .narration-body strong { color: var(--text); font-weight: 500; }
+  .narration-body code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--data);
+  }
+  .narration-body .danger { color: var(--danger); }
+  .narration-body .safe   { color: var(--result); }
+  .narration-key {
+    background: var(--surface-2);
+    border-left: 2px solid var(--driver);
+    padding: 12px 14px;
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+    color: var(--text-2);
+    margin-top: auto;
+  }
+  .narration-key strong {
+    color: var(--text);
+    display: block;
+    margin-bottom: 4px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .narration-key.danger { border-left-color: var(--danger); }
+  .narration-key.danger strong { color: var(--danger); }
+
+  /* ---- Controls ---- */
+  .controls {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 20px;
+    justify-content: space-between;
+  }
+  .control-group { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .control-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .stepper {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .stepper button {
+    background: transparent;
+    border: none;
+    color: var(--text-2);
+    width: 28px; height: 28px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 14px;
+    transition: all .15s;
+  }
+  .stepper button:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+  .stepper button:disabled { opacity: .3; cursor: not-allowed; }
+  .stepper-value {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 500;
+    width: 32px;
+    text-align: center;
+    color: var(--text);
+  }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .05em;
+    padding: 10px 18px;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all .15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--text-3); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary {
+    background: var(--driver);
+    border-color: var(--driver);
+    color: white;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: #d54f15;
+    border-color: #d54f15;
+  }
+  .btn-primary:disabled { opacity: .5; background: var(--surface-2); border-color: var(--border-bright); color: var(--text-3); }
+
+  /* ---- Footer ---- */
+  .footnote {
+    margin-top: 32px;
+    padding: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-2);
+    font-size: 14px;
+  }
+  .footnote strong { color: var(--text); }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .05em;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 8px; height: 8px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="eyebrow">Part 2 · Going Deeper</div>
+    <h1>Spark Under <span class="danger">Pressure</span></h1>
+    <p class="lead">
+      You know about drivers and executors. Now meet the moving parts inside them — <span class="term">tasks and slots</span>,
+      <span class="term">lazy evaluation</span>, and the one operation most likely to make your driver crash:
+      <code style="font-family:var(--mono);color:var(--danger);background:rgba(239,68,68,.08);padding:2px 6px;border-radius:4px;font-size:14px">collect()</code>.
+    </p>
+  </header>
+
+  <!-- Scenario tabs -->
+  <div class="tabs" role="tablist" id="tabs">
+    <button class="tab active" data-scenario="slots">
+      <span class="tab-num">01</span> Slots &amp; Tasks
+    </button>
+    <button class="tab" data-scenario="lazy">
+      <span class="tab-num">02</span> Lazy Evaluation
+    </button>
+    <button class="tab" data-scenario="killer">
+      <span class="tab-num">03</span> The Driver Killer
+    </button>
+  </div>
+
+  <div class="main">
+    <div class="canvas" id="canvas">
+      <div class="canvas-header">
+        <div class="canvas-title">
+          <span class="label" id="scenarioTitle">Slots &amp; Tasks</span>
+          <span style="margin:0 8px;color:var(--text-3)">·</span>
+          <span id="scenarioSubtitle">How parallelism actually works inside the cluster</span>
+        </div>
+        <div class="scenario-status" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span id="statusText">idle</span>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 1: SLOTS & TASKS =============== -->
+      <div class="scenario active" id="scenario-slots">
+        <div class="stage-slots">
+          <div class="task-queue">
+            <div class="queue-label">
+              <span>Task Queue · pending work</span>
+              <span id="queueCount">0 tasks</span>
+            </div>
+            <div class="queue-tasks" id="queueTasks"></div>
+          </div>
+
+          <div class="executor-row-slots" id="executorRowSlots"></div>
+
+          <div class="stats-row">
+            <div class="stat">
+              <div class="stat-label">Total tasks</div>
+              <div class="stat-value" id="statTotalTasks">8</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Parallel slots</div>
+              <div class="stat-value" id="statSlots">6</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Waves needed</div>
+              <div class="stat-value highlight" id="statWaves">2</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Completed</div>
+              <div class="stat-value good" id="statDone">0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 2: LAZY EVALUATION =============== -->
+      <div class="scenario" id="scenario-lazy">
+        <div class="stage-lazy">
+          <div class="pipeline-panel">
+            <div class="panel-header">
+              <span class="panel-title">Pipeline · Your Code</span>
+              <span class="panel-status idle" id="pipelineStatus">idle</span>
+            </div>
+            <div class="pipeline-code" id="pipelineCode">
+              <div class="pipeline-empty">Click a transformation or action below to start building.</div>
+            </div>
+            <div class="pipeline-footer">
+              <span id="pipelineCount">0 ops</span>
+              <span class="pipeline-time" id="pipelineTime">execution time: —</span>
+            </div>
+          </div>
+
+          <div class="dag-panel">
+            <div class="panel-header">
+              <span class="panel-title">Logical DAG · What Spark Sees</span>
+            </div>
+            <div class="dag-canvas">
+              <svg id="dagSvg" viewBox="0 0 280 360" preserveAspectRatio="xMidYMid meet">
+                <defs>
+                  <marker id="dag-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                          markerUnits="strokeWidth" markerWidth="6" markerHeight="6"
+                          orient="auto">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border-bright)"/>
+                  </marker>
+                </defs>
+                <g id="dagGroup"></g>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="op-buttons" style="margin-bottom: 12px;">
+          <span class="op-group-label">Transformations (lazy)</span>
+          <button class="op-btn transformation" data-op="filter">.filter()</button>
+          <button class="op-btn transformation" data-op="map">.map()</button>
+          <button class="op-btn transformation" data-op="groupBy">.groupBy()</button>
+          <button class="op-btn transformation" data-op="distinct">.distinct()</button>
+        </div>
+        <div class="op-buttons">
+          <span class="op-group-label">Actions (eager · trigger execution)</span>
+          <button class="op-btn action" data-op="count">.count()</button>
+          <button class="op-btn action" data-op="first">.first()</button>
+          <button class="op-btn action" data-op="take">.take(10)</button>
+          <button class="op-btn action danger" data-op="collect">.collect()</button>
+        </div>
+
+        <div class="result-banner" id="lazyResult">
+          <span class="key">Result</span>
+          <div class="val" id="lazyResultVal">—</div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 3: DRIVER KILLER =============== -->
+      <div class="scenario" id="scenario-killer">
+        <div class="stage-killer">
+          <div class="driver-killer-node" id="killerDriver">
+            <div class="killer-driver-title">Driver · JVM Heap</div>
+            <div class="node-title">SparkContext · 1 GB heap allocated</div>
+            <div class="heap-bar">
+              <div class="heap-fill" id="heapFill"></div>
+              <div class="heap-label" id="heapLabel">0 MB / 1024 MB</div>
+            </div>
+          </div>
+
+          <div class="killer-executors" id="killerExecutors"></div>
+
+          <div style="margin-top: 8px;">
+            <div class="control-label" style="margin-bottom: 10px;">Pick an action to run on the dataset</div>
+            <div class="op-list" id="killerOps"></div>
+          </div>
+        </div>
+
+        <div class="oom-overlay" id="oomOverlay">
+          <div class="oom-title">⚠ OutOfMemoryError</div>
+          <div class="oom-subtitle">The driver tried to materialize all <span id="oomTotalGb">3</span> GB of executor data in its 1 GB heap.</div>
+          <div class="oom-stack" id="oomStack">
+<span class="err">Exception in thread "main" java.lang.OutOfMemoryError: Java heap space</span>
+  at scala.collection.mutable.ArrayBuffer.<span class="trace">ensureSize</span>(<span class="file">ArrayBuffer.scala:151</span>)
+  at scala.collection.mutable.ArrayBuffer.<span class="trace">$plus$eq</span>(<span class="file">ArrayBuffer.scala:84</span>)
+  at org.apache.spark.rdd.RDD.<span class="trace">collect</span>(<span class="file">RDD.scala:1030</span>)
+  at org.apache.spark.api.java.JavaRDDLike.<span class="trace">collect</span>(<span class="file">JavaRDDLike.scala:362</span>)
+  at MyApp$.<span class="trace">main</span>(<span class="file">MyApp.scala:42</span>)
+<span class="err">Driver exited with code 137 (OOM killed by kernel)</span>
+          </div>
+          <button class="btn btn-primary" id="oomReset">↺ Restart Cluster</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Narration panel -->
+    <div class="narration">
+      <div class="narration-header">
+        <div class="narration-step" id="narrStep">SCENARIO · 01</div>
+        <div class="narration-title" id="narrTitle">Tasks fill slots</div>
+      </div>
+      <div class="narration-body" id="narrBody">
+        <p>An <strong>executor</strong> isn't one worker — it's a <strong>JVM process</strong> with multiple <strong>slots</strong>, each tied to a CPU core. One slot runs one <strong>task</strong> at a time.</p>
+        <p>Total parallelism = sum of slots across all executors. If you have 12 tasks and 6 slots, you'll need 2 waves of work.</p>
+        <p>Click <strong>Submit Job</strong> below to see this play out.</p>
+      </div>
+      <div class="narration-key" id="narrKey">
+        <strong>Key Concept</strong>
+        Partitions → tasks → slots. Wall-clock time ≈ (tasks ÷ slots) × time-per-task.
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls" id="controls"></div>
+
+  <div class="footnote">
+    <div class="legend" style="margin-bottom: 12px">
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--driver)"></span>Driver</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--executor)"></span>Executor</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--info)"></span>Transformation (lazy)</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--driver)"></span>Action (eager)</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--danger)"></span>Danger / OOM</div>
+    </div>
+    <strong>Performance hint:</strong> If you ever need the full dataset in your driver program, you're probably doing it wrong. Write results to storage with <code style="font-family:var(--mono);color:var(--data);background:var(--surface-2);padding:2px 6px;border-radius:4px">.write.parquet(...)</code>, or stream results back with <code style="font-family:var(--mono);color:var(--data);background:var(--surface-2);padding:2px 6px;border-radius:4px">.toLocalIterator()</code>. Use <code style="font-family:var(--mono);color:var(--data);background:var(--surface-2);padding:2px 6px;border-radius:4px">.collect()</code> only after a heavy reduction has shrunk results to a few KB.
+  </div>
+
+</div>
+
+<script>
+// =====================================================================
+// State
+// =====================================================================
+const STATE = {
+  scenario: 'slots',
+  isAnimating: false,
+  abortFlag: false,
+
+  // Slots scenario
+  numExecutors: 3,
+  slotsPerExecutor: 2,
+  numTasks: 8,
+  slots: [],   // {execIdx, slotIdx, status, taskId}
+  tasksDone: 0,
+  taskTime: 800, // ms per task
+
+  // Lazy scenario
+  pipeline: [],   // [{kind, op, name, args}]
+  pipelineExecuting: false,
+  pipelineDone: false,
+
+  // Killer scenario
+  partitionSizeMB: 400,   // per executor — default chosen so 3×400=1200MB > 1024MB heap → collect() OOMs
+  partitionRows: 1_200_000,
+  numKillerExecs: 3,
+  heapUsedMB: 0,
+  heapMaxMB: 1024,
+  driverDead: false,
+};
+
+// =====================================================================
+// DOM helpers
+// =====================================================================
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => {
+  const t = setTimeout(() => r(), ms);
+  const i = setInterval(() => {
+    if (STATE.abortFlag) { clearTimeout(t); clearInterval(i); r(); }
+  }, 50);
+});
+
+function setStatus(text, mode='idle') {
+  const s = $('statusIndicator');
+  $('statusText').textContent = text;
+  s.classList.toggle('running', mode === 'running');
+  s.classList.toggle('error', mode === 'error');
+}
+
+function setNarration({step, title, body, key, danger=false}) {
+  $('narrStep').textContent = step;
+  $('narrTitle').textContent = title;
+  $('narrBody').innerHTML = body;
+  if (key) {
+    $('narrKey').innerHTML = `<strong>${key.title}</strong>${key.body}`;
+    $('narrKey').classList.toggle('danger', danger);
+    $('narrKey').style.display = '';
+  } else {
+    $('narrKey').style.display = 'none';
+  }
+}
+
+function clearAllParticles() {
+  document.querySelectorAll('.particle').forEach(p => p.remove());
+}
+
+function flyParticle(fromEl, toEl, opts={}) {
+  return new Promise(resolve => {
+    if (STATE.abortFlag || !fromEl || !toEl) { resolve(); return; }
+    const cssClass = opts.class || 'data';
+    const duration = opts.duration || 700;
+    const delay = opts.delay || 0;
+    const stage = $('canvas');
+    const stageRect = stage.getBoundingClientRect();
+    const fr = fromEl.getBoundingClientRect();
+    const tr = toEl.getBoundingClientRect();
+    const x1 = fr.left + fr.width/2 - stageRect.left - 4;
+    const y1 = fr.top + fr.height/2 - stageRect.top - 4;
+    const x2 = tr.left + tr.width/2 - stageRect.left - 4;
+    const y2 = tr.top + tr.height/2 - stageRect.top - 4;
+    const p = document.createElement('div');
+    p.className = 'particle ' + cssClass;
+    p.style.left = x1 + 'px';
+    p.style.top = y1 + 'px';
+    p.style.transitionDuration = duration + 'ms';
+    stage.appendChild(p);
+    setTimeout(() => {
+      p.style.left = x2 + 'px';
+      p.style.top = y2 + 'px';
+    }, 20 + delay);
+    setTimeout(() => { p.remove(); resolve(); }, duration + delay + 50);
+  });
+}
+
+// =====================================================================
+// SCENARIO 1: SLOTS & TASKS
+// =====================================================================
+function renderSlotsScenario() {
+  // Render task queue
+  const queue = $('queueTasks');
+  queue.innerHTML = '';
+  for (let i = 1; i <= STATE.numTasks; i++) {
+    const chip = document.createElement('div');
+    chip.className = 'task-chip';
+    chip.id = `task-${i}`;
+    chip.textContent = `T${i}`;
+    queue.appendChild(chip);
+  }
+  $('queueCount').textContent = `${STATE.numTasks} task${STATE.numTasks===1?'':'s'}`;
+
+  // Render executors with slots
+  const row = $('executorRowSlots');
+  row.innerHTML = '';
+  row.style.gridTemplateColumns = `repeat(${STATE.numExecutors}, 1fr)`;
+  STATE.slots = [];
+
+  for (let e = 0; e < STATE.numExecutors; e++) {
+    const exec = document.createElement('div');
+    exec.className = 'executor-with-slots';
+    exec.innerHTML = `
+      <div class="exec-header">
+        <span class="exec-name">Executor ${e+1}</span>
+        <span class="exec-cores">${STATE.slotsPerExecutor} cores · ${STATE.slotsPerExecutor} slots</span>
+      </div>
+      <div class="slots-grid" id="slots-${e}"
+           style="grid-template-columns: repeat(${STATE.slotsPerExecutor}, 1fr)"></div>
+    `;
+    row.appendChild(exec);
+    const grid = exec.querySelector(`#slots-${e}`);
+    for (let s = 0; s < STATE.slotsPerExecutor; s++) {
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      slot.id = `slot-${e}-${s}`;
+      slot.innerHTML = `
+        <div class="slot-label">core ${s+1}</div>
+        <div class="slot-task" id="slot-task-${e}-${s}">idle</div>
+      `;
+      grid.appendChild(slot);
+      STATE.slots.push({execIdx: e, slotIdx: s, status: 'idle', taskId: null});
+    }
+  }
+
+  // Update stats
+  const totalSlots = STATE.numExecutors * STATE.slotsPerExecutor;
+  const waves = Math.ceil(STATE.numTasks / totalSlots);
+  $('statTotalTasks').textContent = STATE.numTasks;
+  $('statSlots').textContent = totalSlots;
+  $('statWaves').textContent = waves;
+  $('statDone').textContent = '0';
+  STATE.tasksDone = 0;
+}
+
+async function runSlotsScenario() {
+  if (STATE.isAnimating) return;
+  STATE.isAnimating = true;
+  setStatus('running', 'running');
+  setNarration({
+    step: 'SCENARIO · 01 · RUNNING',
+    title: 'Tasks fill slots in waves',
+    body: `<p>The driver scheduler is dispatching tasks. <strong>Each slot can hold exactly one task</strong> at a time.</p>
+           <p>With ${STATE.numTasks} tasks and ${STATE.numExecutors * STATE.slotsPerExecutor} parallel slots, expect <strong>${Math.ceil(STATE.numTasks / (STATE.numExecutors*STATE.slotsPerExecutor))}</strong> wave(s) of work.</p>
+           <p>When a task finishes, its slot grabs the next pending task from the queue. No new task = idle slot.</p>`,
+    key: {
+      title: 'Slots = cores',
+      body: 'One slot ≈ one CPU core. Tune <code>spark.executor.cores</code> to control how many tasks an executor runs at once.'
+    }
+  });
+
+  let nextTaskId = 1;
+  let completed = 0;
+
+  // Loop: while there are tasks to dispatch or in flight
+  while (nextTaskId <= STATE.numTasks || STATE.slots.some(s => s.status === 'busy')) {
+    if (STATE.abortFlag) break;
+
+    // Fill idle slots from queue
+    const dispatches = [];
+    for (const slot of STATE.slots) {
+      if (slot.status === 'idle' && nextTaskId <= STATE.numTasks) {
+        slot.status = 'busy';
+        slot.taskId = nextTaskId++;
+        dispatches.push(slot);
+      }
+    }
+
+    // Animate dispatches (parallel)
+    const dispatchPromises = dispatches.map((slot, i) => {
+      const taskChip = $(`task-${slot.taskId}`);
+      const slotEl = $(`slot-${slot.execIdx}-${slot.slotIdx}`);
+      // Mark queue task as dispatched
+      taskChip.classList.add('dispatched');
+      // Light up slot
+      slotEl.classList.add('busy');
+      $(`slot-task-${slot.execIdx}-${slot.slotIdx}`).textContent = `T${slot.taskId}`;
+      return flyParticle(taskChip, slotEl, { class: 'data', duration: 500, delay: i * 50 });
+    });
+    await Promise.all(dispatchPromises);
+
+    // Process for taskTime
+    await sleep(STATE.taskTime);
+    if (STATE.abortFlag) break;
+
+    // Complete all busy slots simultaneously
+    for (const slot of STATE.slots) {
+      if (slot.status === 'busy') {
+        const slotEl = $(`slot-${slot.execIdx}-${slot.slotIdx}`);
+        const taskChip = $(`task-${slot.taskId}`);
+        if (taskChip) taskChip.classList.add('done');
+        slotEl.classList.remove('busy');
+        slotEl.classList.add('done');
+        $(`slot-task-${slot.execIdx}-${slot.slotIdx}`).textContent = `T${slot.taskId} ✓`;
+        slot.status = 'idle';
+        slot.taskId = null;
+        completed++;
+        $('statDone').textContent = completed;
+      }
+    }
+    // Brief pause showing completion before next wave
+    await sleep(400);
+
+    // Clear "done" visual to prepare for next wave (only if more tasks)
+    if (nextTaskId <= STATE.numTasks) {
+      for (let e = 0; e < STATE.numExecutors; e++) {
+        for (let s = 0; s < STATE.slotsPerExecutor; s++) {
+          const slotEl = $(`slot-${e}-${s}`);
+          slotEl.classList.remove('done');
+          $(`slot-task-${e}-${s}`).textContent = 'idle';
+        }
+      }
+    }
+  }
+
+  if (!STATE.abortFlag) {
+    setStatus('complete', 'idle');
+    setNarration({
+      step: 'SCENARIO · 01 · COMPLETE',
+      title: `${STATE.numTasks} tasks finished`,
+      body: `<p>All tasks done. Notice how the wall-clock time matches the number of <strong>waves</strong>, not the number of tasks.</p>
+             <p>This is why partition count matters. Too few partitions = idle slots = wasted compute. Too many = scheduling overhead.</p>
+             <p>Try changing executors, slots, or tasks and submit again to see the trade-off.</p>`,
+      key: {
+        title: 'Rule of thumb',
+        body: 'Aim for ~2–4× as many partitions as total slots. Enough to keep slots busy, not so many that overhead dominates.'
+      }
+    });
+  }
+  STATE.isAnimating = false;
+}
+
+// =====================================================================
+// SCENARIO 2: LAZY EVALUATION
+// =====================================================================
+const OP_DEFS = {
+  filter:   { kind: 'transformation', label: 'filter',   args: 'x => x > 50' },
+  map:      { kind: 'transformation', label: 'map',      args: 'x => x * 2' },
+  groupBy:  { kind: 'transformation', label: 'groupBy',  args: 'x => x.category' },
+  distinct: { kind: 'transformation', label: 'distinct', args: '' },
+  count:    { kind: 'action', label: 'count',   args: '',  result: '1,200,000' },
+  first:    { kind: 'action', label: 'first',   args: '',  result: 'Row(id=1, ...)' },
+  take:     { kind: 'action', label: 'take',    args: '10', result: '[Row, Row, ... ×10]' },
+  collect:  { kind: 'action', label: 'collect', args: '',  danger: true, result: '⚠ all 1.2M rows pulled to driver' },
+};
+
+function renderPipeline() {
+  const code = $('pipelineCode');
+  if (STATE.pipeline.length === 0) {
+    code.innerHTML = '<div class="pipeline-empty">Click a transformation or action below to start building.</div>';
+    $('pipelineCount').textContent = '0 ops';
+    $('pipelineStatus').textContent = 'idle';
+    $('pipelineStatus').className = 'panel-status idle';
+    $('pipelineTime').textContent = 'execution time: —';
+    $('pipelineTime').className = 'pipeline-time';
+    renderDag([], -1);
+    $('lazyResult').classList.remove('show', 'danger');
+    return;
+  }
+
+  let html = `<div class="code-line first">val rdd = sc.textFile(<span class="args">"input.csv"</span>)</div>`;
+  STATE.pipeline.forEach((op, i) => {
+    const def = OP_DEFS[op.op];
+    const argText = def.args ? `<span class="args">${def.args}</span>` : '';
+    const cls = `code-line ${def.kind}${def.danger ? ' danger' : ''}`;
+    html += `<div class="${cls}" id="code-line-${i}">.<span class="method">${def.label}</span>(${argText})</div>`;
+  });
+  code.innerHTML = html;
+
+  const transforms = STATE.pipeline.filter(o => OP_DEFS[o.op].kind === 'transformation').length;
+  const actions = STATE.pipeline.filter(o => OP_DEFS[o.op].kind === 'action').length;
+  $('pipelineCount').textContent = `${transforms} transformation${transforms===1?'':'s'} · ${actions} action${actions===1?'':'s'}`;
+
+  if (actions === 0) {
+    $('pipelineStatus').textContent = 'planned (lazy)';
+    $('pipelineStatus').className = 'panel-status planned';
+    $('pipelineTime').textContent = 'execution time: 0 ms (nothing ran)';
+    $('pipelineTime').className = 'pipeline-time';
+  }
+  renderDag(STATE.pipeline, -1);
+}
+
+function renderDag(pipeline, executingIdx) {
+  const group = $('dagGroup');
+  group.innerHTML = '';
+  const svg = $('dagSvg');
+
+  if (pipeline.length === 0) {
+    // empty placeholder
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', 140);
+    t.setAttribute('y', 180);
+    t.setAttribute('fill', 'var(--text-3)');
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('font-family', 'var(--sans)');
+    t.setAttribute('font-size', '13');
+    t.setAttribute('font-style', 'italic');
+    t.textContent = 'DAG is empty';
+    group.appendChild(t);
+    return;
+  }
+
+  // Layout: vertical stack of nodes. We have 1 source + N ops.
+  const nodes = ['source', ...pipeline.map(o => o.op)];
+  const total = nodes.length;
+  const cw = 280;
+  const padTop = 24;
+  const padBottom = 24;
+  const availH = 360 - padTop - padBottom;
+  const nodeH = 30;
+  const gap = total > 1 ? Math.max(8, (availH - total*nodeH) / (total-1)) : 0;
+  // If too tall, shrink dynamically. Recompute viewBox.
+  const totalH = total*nodeH + (total-1)*gap + padTop + padBottom;
+  svg.setAttribute('viewBox', `0 0 ${cw} ${Math.max(360, totalH)}`);
+
+  const positions = nodes.map((_, i) => padTop + i*(nodeH + gap));
+
+  // Edges
+  for (let i = 0; i < nodes.length - 1; i++) {
+    const y1 = positions[i] + nodeH;
+    const y2 = positions[i+1];
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', `M ${cw/2} ${y1} L ${cw/2} ${y2}`);
+    path.setAttribute('class', 'dag-edge' + (executingIdx > i ? ' complete' : ''));
+    group.appendChild(path);
+  }
+
+  // Nodes
+  nodes.forEach((n, i) => {
+    const y = positions[i];
+    const x = (cw - 160) / 2;
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', x);
+    rect.setAttribute('y', y);
+    rect.setAttribute('width', 160);
+    rect.setAttribute('height', nodeH);
+    rect.setAttribute('rx', 5);
+    let cls = 'dag-node-rect';
+    if (n !== 'source') {
+      const def = OP_DEFS[n];
+      cls += ' ' + def.kind;
+      if (def.danger) cls += ' danger';
+    }
+    if (i - 1 === executingIdx) cls += ' executing';
+    else if (executingIdx >= 0 && i <= executingIdx) cls += ' complete';
+    rect.setAttribute('class', cls);
+    group.appendChild(rect);
+
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', cw/2);
+    text.setAttribute('y', y + nodeH/2 + 1);
+    text.setAttribute('class', 'dag-node-text');
+    text.textContent = n === 'source' ? 'textFile(input.csv)' : `${OP_DEFS[n].label}()`;
+    group.appendChild(text);
+  });
+}
+
+async function executePipeline() {
+  if (STATE.pipelineExecuting) return;
+  const actionIdx = STATE.pipeline.findIndex(o => OP_DEFS[o.op].kind === 'action');
+  if (actionIdx < 0) return;
+  STATE.pipelineExecuting = true;
+  setStatus('running', 'running');
+
+  $('pipelineStatus').textContent = 'EXECUTING';
+  $('pipelineStatus').className = 'panel-status executing';
+  $('pipelineTime').textContent = 'execution time: …';
+  $('pipelineTime').className = 'pipeline-time executing';
+
+  const start = performance.now();
+  // Light up each node sequentially
+  for (let i = 0; i < STATE.pipeline.length; i++) {
+    if (STATE.abortFlag) break;
+    renderDag(STATE.pipeline, i);
+    const line = $(`code-line-${i}`);
+    if (line) line.classList.add('executing');
+    await sleep(450);
+    if (line) {
+      line.classList.remove('executing');
+      line.classList.add('complete');
+    }
+  }
+  // Final state — all complete. Pass pipeline.length so the action node
+  // (last in nodes[]) doesn't match the "i - 1 === executingIdx" executing check.
+  renderDag(STATE.pipeline, STATE.pipeline.length);
+
+  const elapsed = Math.round(performance.now() - start);
+  const action = STATE.pipeline[actionIdx];
+  const def = OP_DEFS[action.op];
+
+  $('pipelineStatus').textContent = def.danger ? 'completed (heavy)' : 'completed';
+  $('pipelineStatus').className = 'panel-status done';
+  $('pipelineTime').textContent = `execution time: ${elapsed} ms`;
+  $('pipelineTime').className = 'pipeline-time done';
+
+  $('lazyResult').classList.add('show');
+  $('lazyResult').classList.toggle('danger', !!def.danger);
+  $('lazyResultVal').textContent = `${def.label}() → ${def.result}`;
+
+  setStatus('complete', 'idle');
+
+  if (def.danger) {
+    setNarration({
+      step: 'SCENARIO · 02 · ACTION FIRED',
+      title: `collect() ran the whole DAG`,
+      body: `<p>That action triggered <strong>every transformation</strong> back to the source — Spark only does work when it has to.</p>
+             <p class="danger">But notice the result: <code>all 1.2M rows pulled to driver</code>. That's the killer. See scenario 3 for what happens when the driver can't hold it.</p>`,
+      key: { title: 'Lazy → eager', body: 'Transformations build a plan. Actions tell Spark to actually do it.' },
+      danger: true,
+    });
+  } else {
+    setNarration({
+      step: 'SCENARIO · 02 · ACTION FIRED',
+      title: `${def.label}() ran the whole DAG`,
+      body: `<p>The action triggered every transformation back to the source. Spark held off until you asked for a real answer.</p>
+             <p>Try adding a few transformations <em>without</em> an action — you'll see the status stays <code>planned (lazy)</code> with 0 ms execution time.</p>`,
+      key: { title: 'Why lazy?', body: 'Spark optimizes the full DAG before running: it can fuse maps, push down filters, and skip work that\'s not needed for the final result.' }
+    });
+  }
+  STATE.pipelineExecuting = false;
+  STATE.pipelineDone = true;
+}
+
+function addOp(op) {
+  if (STATE.pipelineDone) {
+    // Reset and start fresh
+    STATE.pipeline = [];
+    STATE.pipelineDone = false;
+    $('lazyResult').classList.remove('show', 'danger');
+  }
+  // Don't allow adding after an action
+  const hasAction = STATE.pipeline.some(o => OP_DEFS[o.op].kind === 'action');
+  if (hasAction) return;
+  STATE.pipeline.push({ op });
+  renderPipeline();
+  if (OP_DEFS[op].kind === 'action') {
+    executePipeline();
+  } else {
+    setNarration({
+      step: 'SCENARIO · 02 · BUILDING',
+      title: 'Transformation added — but nothing ran',
+      body: `<p>You just added <code>${OP_DEFS[op].label}()</code>. Spark recorded it in the DAG and immediately returned — <strong>no computation happened yet</strong>.</p>
+             <p>You can keep stacking transformations all day. The DAG grows, but executors stay idle until you call an action.</p>`,
+      key: { title: 'Lazy evaluation', body: 'Transformations are recorded, not executed. This lets Spark optimize the whole plan when an action finally fires.' }
+    });
+  }
+}
+
+// =====================================================================
+// SCENARIO 3: DRIVER KILLER
+// =====================================================================
+const KILLER_OPS = [
+  {
+    id: 'count', name: '.count()', desc: 'How many rows total?',
+    icon: '#', tier: 'safe', badge: 'safe',
+    returnsRows: 0, returnsMB: 0.008, // 1 long per partition, then summed
+    resultText: (rowCount) => `Long → ${rowCount.toLocaleString()}`,
+  },
+  {
+    id: 'take', name: '.take(10)', desc: 'Pull the first 10 rows back',
+    icon: '↑', tier: 'safe', badge: 'safe',
+    returnsRows: 10, returnsMB: 0.02,
+    resultText: () => `Array[Row] of 10 rows`,
+  },
+  {
+    id: 'show', name: '.show(20)', desc: 'Display 20 rows as a table',
+    icon: '▤', tier: 'safe', badge: 'safe',
+    returnsRows: 20, returnsMB: 0.04,
+    resultText: () => `printed 20 rows to console`,
+  },
+  {
+    id: 'groupBy', name: '.groupBy(c).count()', desc: 'Counts per category — shuffles, but returns small',
+    icon: 'Σ', tier: 'medium', badge: 'mild',
+    returnsRows: 0, returnsMB: 0.1,
+    resultText: () => `Map[String,Long] · 3 entries`,
+  },
+  {
+    id: 'collect', name: '.collect()', desc: 'Pull ALL data to the driver',
+    icon: '⚠', tier: 'danger', badge: 'danger',
+    returnsRows: 'all', returnsMB: 'all',
+    resultText: () => `OOM`,
+  },
+];
+
+function renderKillerScenario() {
+  // Driver heap
+  updateHeap(0, true);
+  $('killerDriver').classList.remove('warning', 'dead');
+  $('oomOverlay').classList.remove('show');
+
+  // Executors with sizes
+  const row = $('killerExecutors');
+  row.innerHTML = '';
+  for (let i = 0; i < STATE.numKillerExecs; i++) {
+    const el = document.createElement('div');
+    el.className = 'killer-exec';
+    el.id = `killer-exec-${i}`;
+    el.innerHTML = `
+      <div class="killer-exec-info">
+        <span class="killer-exec-name">Executor ${i+1}</span>
+        <span class="killer-exec-size">${STATE.partitionSizeMB} MB</span>
+        <span class="killer-exec-rows">${STATE.partitionRows.toLocaleString()} rows</span>
+      </div>
+      <div class="killer-exec-flow" id="killer-flow-${i}">idle</div>
+    `;
+    row.appendChild(el);
+  }
+
+  // Operations
+  const ops = $('killerOps');
+  ops.innerHTML = '';
+  KILLER_OPS.forEach(op => {
+    const card = document.createElement('div');
+    card.className = `op-card ${op.tier}`;
+    card.id = `killer-op-${op.id}`;
+    card.innerHTML = `
+      <div class="op-card-icon">${op.icon}</div>
+      <div class="op-card-body">
+        <div class="op-card-name">${op.name}</div>
+        <div class="op-card-desc">${op.desc}</div>
+      </div>
+      <div class="op-card-badge">${op.badge}</div>
+    `;
+    card.addEventListener('click', () => {
+      if (STATE.isAnimating || STATE.driverDead) return;
+      runKillerOp(op);
+    });
+    ops.appendChild(card);
+  });
+  STATE.driverDead = false;
+  STATE.heapUsedMB = 0;
+}
+
+function updateHeap(mb, instant=false) {
+  STATE.heapUsedMB = mb;
+  const pct = Math.min(100, (mb / STATE.heapMaxMB) * 100);
+  const fill = $('heapFill');
+  fill.classList.toggle('fast', !instant);
+  fill.style.width = pct + '%';
+  $('heapLabel').textContent = `${Math.round(mb)} MB / ${STATE.heapMaxMB} MB`;
+  if (pct > 80 && pct < 100) $('killerDriver').classList.add('warning');
+  else if (pct < 80) $('killerDriver').classList.remove('warning');
+}
+
+async function runKillerOp(op) {
+  STATE.isAnimating = true;
+  setStatus('running', 'running');
+
+  // Determine flow per executor
+  let totalReturnMB = 0;
+  let isCollect = op.id === 'collect';
+  let executorContrib = [];
+
+  if (op.id === 'count') {
+    // Each exec returns ~8 bytes; driver sums to a single number
+    for (let i = 0; i < STATE.numKillerExecs; i++) executorContrib.push(0.003);
+  } else if (op.id === 'take') {
+    // Take from one or two executors only
+    executorContrib = [0.02, 0, 0].slice(0, STATE.numKillerExecs);
+  } else if (op.id === 'show') {
+    executorContrib = [0.04, 0, 0].slice(0, STATE.numKillerExecs);
+  } else if (op.id === 'groupBy') {
+    for (let i = 0; i < STATE.numKillerExecs; i++) executorContrib.push(0.03);
+  } else if (op.id === 'collect') {
+    for (let i = 0; i < STATE.numKillerExecs; i++) executorContrib.push(STATE.partitionSizeMB);
+  }
+
+  totalReturnMB = executorContrib.reduce((a,b)=>a+b, 0);
+
+  // Pre-narration
+  if (op.tier === 'safe') {
+    setNarration({
+      step: `SCENARIO · 03 · ${op.name.toUpperCase()}`,
+      title: 'Small return — driver is fine',
+      body: `<p>Running <code>${op.name}</code>. Executors compute locally and send back a <span class="safe">tiny payload</span> — total ~${totalReturnMB < 0.05 ? '< 1 KB' : Math.round(totalReturnMB*1024)+' KB'}.</p>
+             <p>This is the safe pattern: keep heavy data on executors, return only what you need.</p>`,
+      key: { title: 'Safe action', body: 'Small, bounded results that fit easily in driver memory.' }
+    });
+  } else if (op.tier === 'medium') {
+    setNarration({
+      step: `SCENARIO · 03 · ${op.name.toUpperCase()}`,
+      title: 'Shuffles, but result is still small',
+      body: `<p><code>${op.name}</code> triggers a shuffle (network I/O cost) but the <strong>final result</strong> is just a small map.</p>
+             <p>Wide transformations are expensive in cluster time, but they don't necessarily threaten the driver.</p>`,
+      key: { title: 'Different costs', body: 'Shuffle cost ≠ driver memory cost. Be aware of both.' }
+    });
+  } else if (op.tier === 'danger') {
+    setNarration({
+      step: `SCENARIO · 03 · ${op.name.toUpperCase()}`,
+      title: 'collect() — pulling everything home',
+      body: `<p class="danger">⚠ <code>collect()</code> tells every executor: <em>"send me ALL your rows."</em></p>
+             <p>Driver heap is ${STATE.heapMaxMB} MB. Executors collectively hold ${STATE.numKillerExecs * STATE.partitionSizeMB} MB.</p>
+             <p>Watch the heap meter.</p>`,
+      key: { title: 'The math', body: 'If sum(executor data) > driver heap, you get an OOM. Always.' },
+      danger: true,
+    });
+  }
+
+  await sleep(400);
+
+  // Animate: send data from each executor to driver, accumulating heap
+  let heap = 0;
+  for (let i = 0; i < STATE.numKillerExecs; i++) {
+    if (STATE.abortFlag) break;
+    const contrib = executorContrib[i];
+    if (contrib > 0) {
+      $(`killer-exec-${i}`).classList.add('sending');
+      $(`killer-flow-${i}`).innerHTML = `<span class="arrow">→</span> ${contrib < 0.1 ? Math.round(contrib*1024)+' KB' : Math.round(contrib)+' MB'}`;
+
+      if (isCollect) {
+        // For collect, animate the heap filling continuously over a longer duration
+        const steps = 24;
+        const stepMB = contrib / steps;
+        for (let s = 0; s < steps; s++) {
+          if (STATE.abortFlag) break;
+          heap += stepMB;
+          updateHeap(heap);
+          // Fire particles periodically
+          if (s % 4 === 0) {
+            flyParticle($(`killer-exec-${i}`), $('killerDriver'), { class: 'huge', duration: 500 });
+          }
+          await sleep(80);
+          // OOM trigger
+          if (heap > STATE.heapMaxMB) {
+            triggerOOM();
+            return;
+          }
+        }
+      } else {
+        // Quick particle
+        await flyParticle($(`killer-exec-${i}`), $('killerDriver'), { class: 'result', duration: 500 });
+        heap += contrib;
+        updateHeap(heap);
+      }
+
+      $(`killer-exec-${i}`).classList.remove('sending');
+    } else {
+      $(`killer-flow-${i}`).textContent = '(no data)';
+    }
+    await sleep(200);
+  }
+
+  // Settle
+  await sleep(600);
+
+  // For non-collect ops, heap clears after the result is consumed
+  if (!isCollect) {
+    // Show result briefly, then clear heap
+    setStatus('complete', 'idle');
+    await sleep(800);
+    // Clear flow indicators
+    for (let i = 0; i < STATE.numKillerExecs; i++) {
+      $(`killer-flow-${i}`).textContent = 'idle';
+    }
+    // For demonstration, decay heap back to 0 (the data was small and got GC'd)
+    updateHeap(0);
+
+    // Show result in narration
+    const rowCount = STATE.numKillerExecs * STATE.partitionRows;
+    setNarration({
+      step: `SCENARIO · 03 · ${op.name.toUpperCase()} COMPLETE`,
+      title: 'Driver survived comfortably',
+      body: `<p>Result: <code>${op.resultText(rowCount)}</code></p>
+             <p>The driver heap barely twitched. <strong>${totalReturnMB < 0.05 ? '< 1 KB' : Math.round(totalReturnMB*1024)+' KB'}</strong> of return data is negligible against a ${STATE.heapMaxMB} MB heap.</p>
+             <p>Now try <code>collect()</code> to see the other extreme.</p>`,
+      key: { title: 'Pattern', body: 'Heavy compute on executors → tiny result to driver. This is what scales.' }
+    });
+  } else {
+    // collect() finished without triggering OOM — the user dialed partition size down enough that it fits.
+    // Don't celebrate. Warn that this is fragile.
+    setStatus('survived', 'idle');
+    const totalMB = STATE.numKillerExecs * STATE.partitionSizeMB;
+    const pctHeap = Math.round((totalMB / STATE.heapMaxMB) * 100);
+    setNarration({
+      step: 'SCENARIO · 03 · COLLECT SURVIVED',
+      title: 'collect() barely fit',
+      body: `<p>It worked — this time. The driver pulled all ${totalMB} MB into a ${STATE.heapMaxMB} MB heap (${pctHeap}% full).</p>
+             <p class="danger">Don't take comfort in this. Your dataset will grow. The next call may land at 110% and crash production.</p>
+             <p>Bump the partition size back up to see the failure mode you're flirting with.</p>`,
+      key: { title: 'Fragile by design', body: 'collect() that fits today may not fit tomorrow. Use <code>.write</code>, <code>.toLocalIterator</code>, or aggregate first.' },
+      danger: true,
+    });
+  }
+  STATE.isAnimating = false;
+}
+
+function triggerOOM() {
+  STATE.driverDead = true;
+  STATE.isAnimating = false;
+  updateHeap(STATE.heapMaxMB);
+  $('killerDriver').classList.add('dead');
+  document.body.classList.add('shake');
+  setTimeout(() => document.body.classList.remove('shake'), 600);
+  $('oomOverlay').classList.add('show');
+  $('oomTotalGb').textContent = ((STATE.numKillerExecs * STATE.partitionSizeMB) / 1024).toFixed(1);
+  setStatus('OOM crash', 'error');
+  setNarration({
+    step: 'SCENARIO · 03 · DRIVER DEAD',
+    title: 'java.lang.OutOfMemoryError',
+    body: `<p class="danger">The driver heap was 1 GB. <code>collect()</code> asked for ${STATE.numKillerExecs * STATE.partitionSizeMB} MB of data.</p>
+           <p>The JVM tried to allocate, failed, threw an OOM, and the driver process died. Your whole Spark job is gone — even though executors had plenty of memory.</p>
+           <p>This is the #1 way newcomers crash production Spark jobs. <strong>Never call collect() on a dataset you haven't reduced first.</strong></p>`,
+    key: { title: 'Safer alternatives', body: '<code>.take(n)</code> for sampling. <code>.toLocalIterator()</code> to stream. <code>.write.parquet()</code> to keep results distributed.' },
+    danger: true,
+  });
+}
+
+function killerReset() {
+  STATE.driverDead = false;
+  STATE.heapUsedMB = 0;
+  STATE.isAnimating = false;
+  STATE.abortFlag = false;
+  $('oomOverlay').classList.remove('show');
+  clearAllParticles();
+  renderKillerScenario();
+  setStatus('idle', 'idle');
+  setNarrationForScenario('killer');
+}
+
+// =====================================================================
+// Scenario switching
+// =====================================================================
+async function softReset() {
+  STATE.abortFlag = true;
+  let waits = 0;
+  while (STATE.isAnimating && waits++ < 100) {
+    await new Promise(r => setTimeout(r, 20));
+  }
+  STATE.abortFlag = false;
+  clearAllParticles();
+  $('oomOverlay').classList.remove('show');
+  STATE.driverDead = false;
+  STATE.heapUsedMB = 0;
+}
+
+function setNarrationForScenario(name) {
+  if (name === 'slots') {
+    setNarration({
+      step: 'SCENARIO · 01',
+      title: 'Tasks fill slots',
+      body: `<p>An <strong>executor</strong> isn't one worker — it's a <strong>JVM process</strong> with multiple <strong>slots</strong>, each tied to a CPU core. One slot runs one <strong>task</strong> at a time.</p>
+             <p>Total parallelism = sum of slots across all executors. With ${STATE.numTasks} tasks and ${STATE.numExecutors * STATE.slotsPerExecutor} slots, expect <strong>${Math.ceil(STATE.numTasks / (STATE.numExecutors*STATE.slotsPerExecutor))}</strong> wave(s) of work.</p>
+             <p>Click <strong>Submit Job</strong> below to see this play out. Adjust the sliders to explore over- and under-parallelism.</p>`,
+      key: { title: 'Key Concept', body: 'Partitions → tasks → slots. Wall time ≈ (tasks ÷ slots) × time-per-task.' }
+    });
+    $('scenarioTitle').textContent = 'Slots & Tasks';
+    $('scenarioSubtitle').textContent = 'How parallelism actually works inside the cluster';
+  } else if (name === 'lazy') {
+    setNarration({
+      step: 'SCENARIO · 02',
+      title: 'Build a pipeline — nothing runs',
+      body: `<p>Click <span class="safe">transformation</span> buttons below to add steps. Watch the DAG grow on the right.</p>
+             <p>Notice the status stays <code>planned (lazy)</code> and execution time is 0 ms. <strong>Spark is doing absolutely nothing</strong> — it's just recording your intent.</p>
+             <p>When you click an <span style="color:var(--driver)">action</span>, the DAG fires and the whole pipeline runs in sequence.</p>`,
+      key: { title: 'Two kinds of operations', body: '<strong>Transformations</strong> (filter, map, groupBy, distinct...) are lazy. <strong>Actions</strong> (count, collect, take...) trigger execution.' }
+    });
+    $('scenarioTitle').textContent = 'Lazy Evaluation';
+    $('scenarioSubtitle').textContent = 'Transformations vs Actions';
+  } else if (name === 'killer') {
+    setNarration({
+      step: 'SCENARIO · 03',
+      title: 'Mind the driver heap',
+      body: `<p>The driver has a fixed JVM heap — 1 GB here. Executors collectively hold <strong>${STATE.numKillerExecs * STATE.partitionSizeMB} MB</strong> of data (${STATE.partitionSizeMB} MB each).</p>
+             <p>Try the actions on the right. <span class="safe">Safe ones</span> return small payloads. <span class="danger">collect()</span> tries to bring everything back to the driver.</p>
+             <p>Watch the heap meter.</p>`,
+      key: { title: 'The danger zone', body: 'When return size > driver heap → OutOfMemoryError. The driver dies and takes your job with it.' }
+    });
+    $('scenarioTitle').textContent = 'The Driver Killer';
+    $('scenarioSubtitle').textContent = 'collect() and other ways to OOM your driver';
+  }
+}
+
+async function switchScenario(name) {
+  STATE.scenario = name;
+  await softReset();
+
+  document.querySelectorAll('.scenario').forEach(s => s.classList.remove('active'));
+  $('scenario-' + name).classList.add('active');
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.scenario === name);
+  });
+
+  setNarrationForScenario(name);
+  renderControls(name);
+
+  if (name === 'slots') {
+    renderSlotsScenario();
+  } else if (name === 'lazy') {
+    STATE.pipeline = [];
+    STATE.pipelineExecuting = false;
+    STATE.pipelineDone = false;
+    renderPipeline();
+  } else if (name === 'killer') {
+    renderKillerScenario();
+  }
+
+  setStatus('idle', 'idle');
+}
+
+// =====================================================================
+// Render scenario-specific controls
+// =====================================================================
+function renderControls(scenario) {
+  const c = $('controls');
+  if (scenario === 'slots') {
+    c.innerHTML = `
+      <div class="control-group">
+        <span class="control-label">Executors</span>
+        <div class="stepper">
+          <button id="execMinus">−</button>
+          <span class="stepper-value" id="execCount">${STATE.numExecutors}</span>
+          <button id="execPlus">+</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <span class="control-label">Slots / exec</span>
+        <div class="stepper">
+          <button id="slotMinus">−</button>
+          <span class="stepper-value" id="slotCount">${STATE.slotsPerExecutor}</span>
+          <button id="slotPlus">+</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <span class="control-label">Tasks</span>
+        <div class="stepper">
+          <button id="taskMinus">−</button>
+          <span class="stepper-value" id="taskCount">${STATE.numTasks}</span>
+          <button id="taskPlus">+</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset</button>
+        <button class="btn btn-primary" id="submitBtn">▶ Submit Job</button>
+      </div>
+    `;
+    $('execMinus').onclick = () => { if (STATE.numExecutors > 1) { STATE.numExecutors--; switchScenario('slots'); } };
+    $('execPlus').onclick  = () => { if (STATE.numExecutors < 4) { STATE.numExecutors++; switchScenario('slots'); } };
+    $('slotMinus').onclick = () => { if (STATE.slotsPerExecutor > 1) { STATE.slotsPerExecutor--; switchScenario('slots'); } };
+    $('slotPlus').onclick  = () => { if (STATE.slotsPerExecutor < 4) { STATE.slotsPerExecutor++; switchScenario('slots'); } };
+    $('taskMinus').onclick = () => { if (STATE.numTasks > 1) { STATE.numTasks--; switchScenario('slots'); } };
+    $('taskPlus').onclick  = () => { if (STATE.numTasks < 16) { STATE.numTasks++; switchScenario('slots'); } };
+    $('resetBtn').onclick  = () => switchScenario('slots');
+    $('submitBtn').onclick = () => runSlotsScenario();
+  } else if (scenario === 'lazy') {
+    c.innerHTML = `
+      <div class="control-group" style="flex: 1; color: var(--text-2); font-size: 13px;">
+        Click transformations to stack them. Click an action to execute the whole DAG.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset Pipeline</button>
+      </div>
+    `;
+    $('resetBtn').onclick = () => switchScenario('lazy');
+    // Wire op buttons
+    document.querySelectorAll('#scenario-lazy .op-btn').forEach(btn => {
+      btn.onclick = () => addOp(btn.dataset.op);
+    });
+  } else if (scenario === 'killer') {
+    c.innerHTML = `
+      <div class="control-group">
+        <span class="control-label">Partition size</span>
+        <div class="stepper">
+          <button id="psizeMinus">−</button>
+          <span class="stepper-value" id="psizeVal">${STATE.partitionSizeMB}</span>
+          <button id="psizePlus">+</button>
+        </div>
+        <span style="color:var(--text-3); font-family: var(--mono); font-size: 11px;">MB / executor</span>
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset Cluster</button>
+      </div>
+    `;
+    $('psizeMinus').onclick = () => { if (STATE.partitionSizeMB > 50) { STATE.partitionSizeMB -= 50; switchScenario('killer'); } };
+    $('psizePlus').onclick  = () => { if (STATE.partitionSizeMB < 800) { STATE.partitionSizeMB += 50; switchScenario('killer'); } };
+    $('resetBtn').onclick = () => switchScenario('killer');
+  }
+}
+
+// =====================================================================
+// Init & event wiring
+// =====================================================================
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => switchScenario(t.dataset.scenario));
+});
+$('oomReset').addEventListener('click', killerReset);
+
+switchScenario('slots');
+</script>
+</body>
+</html>

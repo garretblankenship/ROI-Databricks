@@ -1,0 +1,2324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Distributed Computing — Foundations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:           #0a0e1a;
+    --surface:      #131826;
+    --surface-2:    #1c2333;
+    --surface-3:    #252d40;
+    --border:       #2a3447;
+    --border-bright:#3a4660;
+    --text:         #e8ecef;
+    --text-2:       #8b95a6;
+    --text-3:       #5a6478;
+    --driver:       #e25a1c;
+    --executor:     #00d9b8;
+    --executor-glow:rgba(0,217,184,.3);
+    --data:         #ffc857;
+    --data-glow:    rgba(255,200,87,.3);
+    --result:       #4ade80;
+    --shuffle:      #c084fc;
+    --shuffle-glow: rgba(192,132,252,.3);
+    --info:         #60a5fa;
+    --info-glow:    rgba(96,165,250,.35);
+    --danger:       #ef4444;
+    --warning:      #fbbf24;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --sans: 'Sora', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-weight: 300;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  body {
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(96,165,250,.08), transparent),
+      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(0,217,184,.04), transparent),
+      var(--bg);
+    background-attachment: fixed;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px);
+    background-size: 32px 32px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 48px 32px 80px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ---- Header ---- */
+  header { margin-bottom: 40px; border-bottom: 1px solid var(--border); padding-bottom: 32px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .25em;
+    text-transform: uppercase;
+    color: var(--info);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .eyebrow::before { content: ''; width: 24px; height: 1px; background: var(--info); }
+  h1 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(34px, 4.8vw, 52px);
+    line-height: 1.05;
+    letter-spacing: -.03em;
+    margin-bottom: 16px;
+  }
+  h1 .accent  { color: var(--info); }
+  .lead {
+    color: var(--text-2);
+    font-size: 17px;
+    max-width: 720px;
+    font-weight: 300;
+  }
+  .lead .term { color: var(--text); font-weight: 400; }
+
+  /* ---- Tabs ---- */
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+  .tab {
+    flex: 1 1 auto; min-width: 0;
+    padding: 12px 18px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .04em;
+    background: transparent;
+    color: var(--text-2);
+    border: 1px solid transparent;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: all .2s;
+    text-align: left;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .tab:hover { color: var(--text); background: var(--surface-2); }
+  .tab.active { background: var(--surface-3); color: var(--text); border-color: var(--border-bright); }
+  .tab-num {
+    font-size: 10px;
+    color: var(--text-3);
+    padding: 2px 6px;
+    background: var(--bg);
+    border-radius: 4px;
+  }
+  .tab.active .tab-num { background: var(--info); color: var(--bg); }
+
+  /* ---- Main layout ---- */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 980px) { .main { grid-template-columns: 1fr; } }
+
+  /* ---- Canvas ---- */
+  .canvas {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+    min-height: 640px;
+    position: relative;
+    overflow: hidden;
+  }
+  .canvas-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 22px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .canvas-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-2);
+    letter-spacing: .05em;
+  }
+  .canvas-title .label { color: var(--text); font-weight: 500; }
+  .scenario-status {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .status-dot {
+    width: 6px; height: 6px;
+    background: var(--text-3);
+    border-radius: 50%;
+    transition: all .3s;
+  }
+  .scenario-status.running .status-dot {
+    background: var(--info);
+    box-shadow: 0 0 8px var(--info-glow);
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 0%,100% {opacity:1} 50% {opacity:.4} }
+
+  .scenario { display: none; }
+  .scenario.active { display: block; }
+
+  /* =================================================================
+     SCENARIO 1: COUPLED vs DECOUPLED
+     ================================================================= */
+  .stage-decoupled {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    min-height: 480px;
+  }
+  @media (max-width: 720px) { .stage-decoupled { grid-template-columns: 1fr; } }
+
+  .arch-panel {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .arch-panel.coupled  { border-left: 3px solid var(--warning); }
+  .arch-panel.decoupled { border-left: 3px solid var(--result); }
+
+  .arch-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .arch-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .arch-subtitle {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .arch-tagline {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed var(--border);
+    line-height: 1.5;
+  }
+
+  /* Coupled: stack of servers, each with compute + storage */
+  .coupled-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+  }
+  .coupled-server {
+    background: var(--surface-3);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    animation: slideIn .35s ease;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .coupled-server-label {
+    grid-column: 1 / -1;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .coupled-resource {
+    background: var(--bg);
+    border-radius: 5px;
+    padding: 8px 10px;
+    text-align: center;
+  }
+  .coupled-resource.compute { border: 1px solid rgba(0,217,184,.4); }
+  .coupled-resource.storage { border: 1px solid rgba(255,200,87,.4); }
+  .coupled-resource-name {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .1em;
+    color: var(--text-3);
+    margin-bottom: 4px;
+  }
+  .coupled-resource.compute .coupled-resource-name { color: var(--executor); }
+  .coupled-resource.storage .coupled-resource-name { color: var(--data); }
+  .coupled-resource-bar {
+    height: 16px;
+    background: var(--surface-2);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+  }
+  .coupled-resource-fill {
+    height: 100%;
+    width: 0%;
+    transition: width .5s cubic-bezier(.4,0,.2,1);
+  }
+  .coupled-resource.compute .coupled-resource-fill { background: var(--executor); }
+  .coupled-resource.storage .coupled-resource-fill { background: var(--data); }
+  .coupled-resource-wasted {
+    height: 100%;
+    width: 0%;
+    background: repeating-linear-gradient(45deg, var(--danger), var(--danger) 3px, rgba(239,68,68,.3) 3px, rgba(239,68,68,.3) 6px);
+    transition: width .5s cubic-bezier(.4,0,.2,1);
+    position: absolute;
+    right: 0;
+    top: 0;
+  }
+  .coupled-resource-text {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-2);
+    margin-top: 4px;
+  }
+
+  /* Decoupled: compute on top, storage below, with connector */
+  .decoupled-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    flex: 1;
+  }
+  .decoupled-compute, .decoupled-storage {
+    background: var(--surface-3);
+    border-radius: 8px;
+    padding: 14px;
+    position: relative;
+  }
+  .decoupled-compute { border: 1.5px solid var(--executor); }
+  .decoupled-storage { border: 1.5px solid var(--data); }
+  .decoupled-layer-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .decoupled-compute .decoupled-layer-label { color: var(--executor); }
+  .decoupled-storage .decoupled-layer-label { color: var(--data); }
+  .workers-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    min-height: 48px;
+  }
+  .worker-box {
+    width: 38px;
+    height: 48px;
+    background: var(--bg);
+    border: 1px solid var(--executor);
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--executor);
+    animation: slideIn .35s ease;
+    text-align: center;
+  }
+  .worker-box .icon { font-size: 14px; margin-bottom: 2px; }
+  .storage-bucket {
+    height: 90px;
+    background: var(--bg);
+    border: 1px dashed var(--data);
+    border-radius: 8px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .storage-bucket-fill {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    background: linear-gradient(to top, rgba(255,200,87,.2), rgba(255,200,87,.05));
+    border-top: 2px solid var(--data);
+    transition: height .5s cubic-bezier(.4,0,.2,1);
+  }
+  .storage-bucket-label {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+  }
+  .storage-bucket-label .gb {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--data);
+    display: block;
+  }
+  .storage-bucket-label .note {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+    letter-spacing: .1em;
+  }
+  .connector-arrows {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    font-size: 18px;
+    height: 14px;
+    gap: 4px;
+  }
+
+  .waste-tracker {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border-radius: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .waste-tracker .label { color: var(--text-3); letter-spacing: .05em; }
+  .waste-tracker .val { font-size: 14px; font-weight: 700; }
+  .waste-tracker .val.bad  { color: var(--danger); }
+  .waste-tracker .val.good { color: var(--result); }
+
+  /* =================================================================
+     SCENARIO 2: VERTICAL SCALING
+     ================================================================= */
+  .stage-vertical {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  @media (max-width: 720px) { .stage-vertical { grid-template-columns: 1fr; } }
+
+  .vertical-machine {
+    background: var(--surface-2);
+    border: 1.5px solid var(--info);
+    border-radius: 12px;
+    padding: 18px;
+    position: relative;
+    transition: all .4s;
+  }
+  .vertical-machine.ceiling {
+    border-color: var(--danger);
+    background: rgba(239,68,68,.04);
+  }
+  .vertical-machine-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--info);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .vertical-machine.ceiling .vertical-machine-title { color: var(--danger); }
+  .vertical-tier-name {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 12px;
+    line-height: 1.2;
+  }
+  .vertical-spec-row {
+    display: grid;
+    grid-template-columns: 80px 1fr auto;
+    gap: 10px;
+    margin-bottom: 10px;
+    align-items: center;
+  }
+  .vertical-spec-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    letter-spacing: .05em;
+  }
+  .vertical-spec-bar {
+    height: 8px;
+    background: var(--bg);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .vertical-spec-fill {
+    height: 100%;
+    background: var(--info);
+    width: 0%;
+    transition: width .5s cubic-bezier(.4,0,.2,1);
+    border-radius: 4px;
+  }
+  .vertical-spec-fill.ram     { background: var(--executor); }
+  .vertical-spec-fill.cores   { background: var(--info); }
+  .vertical-spec-fill.disk    { background: var(--data); }
+  .vertical-spec-value {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    min-width: 70px;
+    text-align: right;
+  }
+  .vertical-cost {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .vertical-cost-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--text-3);
+    text-transform: uppercase;
+  }
+  .vertical-cost-value {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--data);
+  }
+  .vertical-cost-value.expensive { color: var(--warning); }
+  .vertical-cost-value.crazy { color: var(--danger); }
+
+  .vertical-process {
+    margin-top: 14px;
+    padding: 12px;
+    background: var(--bg);
+    border-radius: 6px;
+  }
+  .vertical-process-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .1em;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .vertical-process-bar {
+    height: 14px;
+    background: var(--surface-3);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+  }
+  .vertical-process-fill {
+    height: 100%;
+    background: var(--info);
+    width: 0%;
+    transition: width .15s linear;
+    border-radius: 3px;
+  }
+
+  .prosCons {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .prosCons-group h4 {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .prosCons-group.pros h4 { color: var(--result); }
+  .prosCons-group.cons h4 { color: var(--danger); }
+  .prosCons-group h4::before {
+    content: '';
+    width: 4px; height: 4px;
+    border-radius: 50%;
+  }
+  .prosCons-group.pros h4::before { background: var(--result); box-shadow: 0 0 8px rgba(74,222,128,.5); }
+  .prosCons-group.cons h4::before { background: var(--danger); box-shadow: 0 0 8px rgba(239,68,68,.5); }
+  .prosCons-group ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .prosCons-group li {
+    font-size: 12px;
+    color: var(--text-2);
+    line-height: 1.45;
+    padding-left: 16px;
+    position: relative;
+  }
+  .prosCons-group li::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 7px;
+    width: 8px; height: 1px;
+  }
+  .prosCons-group.pros li::before { background: var(--result); }
+  .prosCons-group.cons li::before { background: var(--danger); }
+  .prosCons-group li strong { color: var(--text); font-weight: 500; }
+
+  /* =================================================================
+     SCENARIO 3: HORIZONTAL SCALING
+     ================================================================= */
+  .stage-horizontal {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  @media (max-width: 720px) { .stage-horizontal { grid-template-columns: 1fr; } }
+
+  .horizontal-cluster {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    position: relative;
+    min-height: 380px;
+    overflow: hidden;
+  }
+  .cluster-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--info);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .workers-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+    min-height: 100px;
+  }
+  .h-worker {
+    background: var(--surface-3);
+    border: 1.5px solid var(--executor);
+    border-radius: 8px;
+    padding: 10px 8px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--executor);
+    position: relative;
+    animation: workerPop .3s ease;
+    min-height: 64px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+  @keyframes workerPop {
+    from { opacity: 0; transform: scale(.8); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  .h-worker .icon { font-size: 16px; color: var(--executor); }
+  .h-worker .name { color: var(--text); }
+  .h-worker.processing { background: rgba(0,217,184,.08); }
+  .h-worker.processing::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(0,217,184,.15), transparent);
+    animation: workerProgress 1.2s linear infinite;
+  }
+  @keyframes workerProgress {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(100%); }
+  }
+  .h-worker .data-share {
+    font-size: 9px;
+    color: var(--text-3);
+  }
+
+  .horizontal-result {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 14px;
+  }
+  .horizontal-result-row {
+    display: grid;
+    grid-template-columns: 100px 1fr 80px;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .horizontal-result-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    letter-spacing: .05em;
+  }
+  .horizontal-result-bar {
+    height: 8px;
+    background: var(--surface-3);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .horizontal-result-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width .6s cubic-bezier(.4,0,.2,1);
+  }
+  .horizontal-result-fill.ideal  { background: var(--result); }
+  .horizontal-result-fill.actual { background: var(--info); }
+  .horizontal-result-fill.network{ background: var(--danger); }
+  .horizontal-result-value {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    text-align: right;
+    font-weight: 500;
+  }
+  .efficiency-display {
+    margin-top: 14px;
+    background: var(--bg);
+    border-radius: 6px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    overflow: hidden;
+  }
+  .efficiency-stat {
+    padding: 10px 12px;
+    text-align: center;
+  }
+  .efficiency-stat + .efficiency-stat {
+    border-left: 1px solid var(--border);
+  }
+  .efficiency-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--text-3);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .efficiency-value {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--info);
+    line-height: 1.15;
+  }
+  .efficiency-value.poor { color: var(--warning); }
+  .efficiency-value.bad  { color: var(--danger); }
+  .efficiency-value.cost { color: var(--data); }
+  .efficiency-sublabel {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+    margin-top: 4px;
+    letter-spacing: .04em;
+    height: 12px;
+  }
+  .efficiency-sublabel .saving { color: var(--result); font-weight: 600; }
+
+  /* Network packets between workers */
+  .packet {
+    position: absolute;
+    width: 6px; height: 6px;
+    background: var(--danger);
+    border-radius: 50%;
+    box-shadow: 0 0 6px rgba(239,68,68,.6);
+    pointer-events: none;
+    z-index: 30;
+  }
+
+  /* =================================================================
+     SCENARIO 4: RAM vs DISK
+     ================================================================= */
+  .stage-memory {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    gap: 18px;
+  }
+  @media (max-width: 720px) { .stage-memory { grid-template-columns: 1fr; } }
+
+  .hierarchy-stack {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .hierarchy-level {
+    background: var(--surface-3);
+    border: 1px solid var(--border-bright);
+    border-left-width: 3px;
+    border-radius: 6px;
+    padding: 10px 12px;
+    transition: all .2s;
+    cursor: pointer;
+  }
+  .hierarchy-level:hover { background: var(--bg); }
+  .hierarchy-level.active {
+    background: rgba(96,165,250,.06);
+    border-color: var(--info);
+    box-shadow: 0 0 12px var(--info-glow);
+  }
+  .hierarchy-level-name {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .hierarchy-level-name .name {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .hierarchy-level-name .speed {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+  }
+  .hierarchy-level-detail {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-2);
+  }
+  .hierarchy-level-detail .size { color: var(--text-2); }
+  .hierarchy-level-detail .cost { color: var(--text-3); }
+  .hierarchy-level[data-tier="cpu"]  { border-left-color: var(--driver); }
+  .hierarchy-level[data-tier="cache"]{ border-left-color: var(--shuffle); }
+  .hierarchy-level[data-tier="ram"]  { border-left-color: var(--info); }
+  .hierarchy-level[data-tier="ssd"]  { border-left-color: var(--data); }
+  .hierarchy-level[data-tier="hdd"]  { border-left-color: var(--warning); }
+  .hierarchy-level[data-tier="net"]  { border-left-color: var(--danger); }
+
+  .race-panel {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+  }
+  .race-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--info);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .race-subtitle {
+    font-size: 12px;
+    color: var(--text-2);
+    margin-bottom: 14px;
+  }
+  .race-track {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 12px;
+    position: relative;
+  }
+  .race-track + .race-track { margin-top: 0; }
+  .race-track-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .race-track-name {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .race-track.ram .race-track-name  { color: var(--info); }
+  .race-track.disk .race-track-name { color: var(--warning); }
+  /* per-tier slow-lane coloring set by data-tier attr */
+  .race-track.disk[data-tier="ssd"] .race-track-name { color: var(--data); }
+  .race-track.disk[data-tier="hdd"] .race-track-name { color: var(--warning); }
+  .race-track.disk[data-tier="net"] .race-track-name { color: var(--danger); }
+  .race-track-time {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .race-track-bar {
+    height: 18px;
+    background: var(--surface-3);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+  .race-track-fill {
+    height: 100%;
+    width: 0%;
+    transition: width .1s linear;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--info), rgba(96,165,250,.6));
+  }
+  .race-track.disk .race-track-fill {
+    background: linear-gradient(90deg, var(--warning), rgba(251,191,36,.5));
+  }
+  .race-track.disk[data-tier="ssd"] .race-track-fill {
+    background: linear-gradient(90deg, var(--data), rgba(255,200,87,.5));
+  }
+  .race-track.disk[data-tier="hdd"] .race-track-fill {
+    background: linear-gradient(90deg, var(--warning), rgba(251,191,36,.5));
+  }
+  .race-track.disk[data-tier="net"] .race-track-fill {
+    background: linear-gradient(90deg, var(--danger), rgba(239,68,68,.5));
+  }
+  .race-track-status {
+    margin-top: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    height: 14px;
+  }
+  .race-track.done .race-track-status { color: var(--result); }
+  .race-track-emoji {
+    position: absolute;
+    top: -2px;
+    font-size: 20px;
+    transition: left .1s linear;
+    z-index: 2;
+  }
+
+  .analogy-box {
+    margin-top: 14px;
+    padding: 14px;
+    background: var(--bg);
+    border-left: 2px solid var(--info);
+    border-radius: 0 8px 8px 0;
+  }
+  .analogy-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--info);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .analogy-body {
+    font-size: 13px;
+    color: var(--text-2);
+    line-height: 1.5;
+  }
+  .analogy-body strong { color: var(--text); }
+  .analogy-body code {
+    font-family: var(--mono);
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--data);
+    font-size: 12px;
+  }
+
+  /* ---- Narration panel ---- */
+  .narration {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    min-height: 640px;
+  }
+  .narration-header { padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .narration-step {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--info);
+    letter-spacing: .1em;
+    margin-bottom: 6px;
+  }
+  .narration-title {
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .narration-body {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text-2);
+    margin-bottom: 20px;
+  }
+  .narration-body p { margin-bottom: 12px; }
+  .narration-body strong { color: var(--text); font-weight: 500; }
+  .narration-body code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--data);
+  }
+  .narration-body .danger { color: var(--danger); }
+  .narration-body .safe   { color: var(--result); }
+  .narration-body .info   { color: var(--info); }
+  .narration-key {
+    background: var(--surface-2);
+    border-left: 2px solid var(--info);
+    padding: 12px 14px;
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+    color: var(--text-2);
+    margin-top: auto;
+  }
+  .narration-key strong {
+    color: var(--text);
+    display: block;
+    margin-bottom: 4px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+
+  /* ---- Controls ---- */
+  .controls {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    justify-content: space-between;
+    min-height: 70px;
+  }
+  .control-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .control-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .stepper {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .stepper button {
+    background: transparent;
+    border: none;
+    color: var(--text-2);
+    width: 28px; height: 28px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 14px;
+    transition: all .15s;
+  }
+  .stepper button:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+  .stepper button:disabled { opacity: .3; cursor: not-allowed; }
+  .stepper-value {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 500;
+    min-width: 32px;
+    text-align: center;
+    color: var(--text);
+    padding: 0 4px;
+  }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .05em;
+    padding: 10px 16px;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all .15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--text-3); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary {
+    background: var(--info);
+    border-color: var(--info);
+    color: var(--bg);
+  }
+  .btn-primary:hover:not(:disabled) { background: #4f8de8; border-color: #4f8de8; }
+  .btn-primary:disabled { opacity: .5; background: var(--surface-2); border-color: var(--border-bright); color: var(--text-3); }
+
+  /* ---- Footer ---- */
+  .footnote {
+    margin-top: 32px;
+    padding: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-2);
+    font-size: 14px;
+  }
+  .footnote strong { color: var(--text); }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .05em;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 8px; height: 8px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="eyebrow">Part 0 · Foundations</div>
+    <h1>Why <span class="accent">distributed</span> data systems exist</h1>
+    <p class="lead">
+      Before you can understand Spark, you need the four ideas it's built on:
+      <span class="term">decoupled compute and storage</span>,
+      <span class="term">vertical scaling</span>,
+      <span class="term">horizontal scaling</span>, and
+      <span class="term">the memory hierarchy</span>.
+      Each one solves a problem that pure single-machine computing can't.
+    </p>
+  </header>
+
+  <div class="tabs" role="tablist" id="tabs">
+    <button class="tab active" data-scenario="decoupled">
+      <span class="tab-num">01</span> Compute &amp; Storage
+    </button>
+    <button class="tab" data-scenario="vertical">
+      <span class="tab-num">02</span> Vertical Scaling
+    </button>
+    <button class="tab" data-scenario="horizontal">
+      <span class="tab-num">03</span> Horizontal Scaling
+    </button>
+    <button class="tab" data-scenario="memory">
+      <span class="tab-num">04</span> RAM vs Disk
+    </button>
+  </div>
+
+  <div class="main">
+    <div class="canvas" id="canvas">
+      <div class="canvas-header">
+        <div class="canvas-title">
+          <span class="label" id="scenarioTitle">Compute &amp; Storage</span>
+          <span style="margin:0 8px;color:var(--text-3)">·</span>
+          <span id="scenarioSubtitle">Coupled vs decoupled architectures</span>
+        </div>
+        <div class="scenario-status" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span id="statusText">idle</span>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 1: DECOUPLED =============== -->
+      <div class="scenario active" id="scenario-decoupled">
+        <div class="stage-decoupled">
+          <!-- Coupled side -->
+          <div class="arch-panel coupled">
+            <div class="arch-header">
+              <div class="arch-title">Coupled</div>
+              <div class="arch-subtitle">legacy · Hadoop, traditional DB</div>
+            </div>
+            <div class="arch-tagline">
+              Each server holds <strong style="color:var(--executor)">compute</strong> AND <strong style="color:var(--data)">storage</strong>. To grow either one, you buy a whole new server.
+            </div>
+            <div class="coupled-stack" id="coupledStack"></div>
+            <div class="waste-tracker">
+              <span class="label">WASTED RESOURCES</span>
+              <span class="val bad" id="coupledWaste">0%</span>
+            </div>
+          </div>
+
+          <!-- Decoupled side -->
+          <div class="arch-panel decoupled">
+            <div class="arch-header">
+              <div class="arch-title">Decoupled</div>
+              <div class="arch-subtitle">cloud-native · Spark on S3</div>
+            </div>
+            <div class="arch-tagline">
+              <strong style="color:var(--executor)">Compute</strong> and <strong style="color:var(--data)">storage</strong> live separately. Scale each independently. No paying for unused capacity.
+            </div>
+            <div class="decoupled-layout">
+              <div class="decoupled-compute">
+                <div class="decoupled-layer-label">⚙ Compute Cluster · ephemeral</div>
+                <div class="workers-row" id="decoupledWorkers"></div>
+              </div>
+              <div class="connector-arrows">↕ network reads ↕</div>
+              <div class="decoupled-storage">
+                <div class="decoupled-layer-label">▣ Object Storage · S3 / GCS / ADLS</div>
+                <div class="storage-bucket">
+                  <div class="storage-bucket-fill" id="storageBucketFill"></div>
+                  <div class="storage-bucket-label">
+                    <span class="gb" id="storageBucketGB">100 GB</span>
+                    <span class="note">scales independently</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="waste-tracker">
+              <span class="label">WASTED RESOURCES</span>
+              <span class="val good">0%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 2: VERTICAL =============== -->
+      <div class="scenario" id="scenario-vertical">
+        <div class="stage-vertical">
+          <div class="vertical-machine" id="verticalMachine">
+            <div class="vertical-machine-title">▤ ONE MACHINE · vertical scaling</div>
+            <div class="vertical-tier-name" id="verticalTierName">—</div>
+
+            <div class="vertical-spec-row">
+              <span class="vertical-spec-label">RAM</span>
+              <div class="vertical-spec-bar"><div class="vertical-spec-fill ram" id="vRamBar"></div></div>
+              <span class="vertical-spec-value" id="vRamValue">—</span>
+            </div>
+            <div class="vertical-spec-row">
+              <span class="vertical-spec-label">CPU cores</span>
+              <div class="vertical-spec-bar"><div class="vertical-spec-fill cores" id="vCoreBar"></div></div>
+              <span class="vertical-spec-value" id="vCoreValue">—</span>
+            </div>
+            <div class="vertical-spec-row">
+              <span class="vertical-spec-label">Disk</span>
+              <div class="vertical-spec-bar"><div class="vertical-spec-fill disk" id="vDiskBar"></div></div>
+              <span class="vertical-spec-value" id="vDiskValue">—</span>
+            </div>
+
+            <div class="vertical-cost">
+              <span class="vertical-cost-label">Cost / month</span>
+              <span class="vertical-cost-value" id="vCost">—</span>
+            </div>
+
+            <div class="vertical-process">
+              <div class="vertical-process-label">
+                <span>Process 1 TB dataset</span>
+                <span id="vTimeLabel">— sec</span>
+              </div>
+              <div class="vertical-process-bar"><div class="vertical-process-fill" id="vProcessFill"></div></div>
+            </div>
+          </div>
+
+          <div class="prosCons">
+            <div class="prosCons-group pros">
+              <h4>Pros of going vertical</h4>
+              <ul>
+                <li><strong>Simple mental model.</strong> One machine, no distributed-systems complexity.</li>
+                <li><strong>No network overhead.</strong> All data stays local — every read is at memory speed.</li>
+                <li><strong>ACID transactions are easy.</strong> No coordination across nodes.</li>
+                <li><strong>Cheap at small scale.</strong> A single server handles most workloads under ~100 GB.</li>
+              </ul>
+            </div>
+            <div class="prosCons-group cons">
+              <h4>Cons of going vertical</h4>
+              <ul>
+                <li><strong>Hard physical ceiling.</strong> The biggest cloud instances top out at ~24 TB RAM.</li>
+                <li><strong>Cost scales worse than linearly.</strong> 10× the specs costs 30–50× more.</li>
+                <li><strong>Single point of failure.</strong> Machine dies → everything stops.</li>
+                <li><strong>Downtime to upgrade.</strong> Adding RAM means rebooting.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 3: HORIZONTAL =============== -->
+      <div class="scenario" id="scenario-horizontal">
+        <div class="stage-horizontal">
+          <div class="horizontal-cluster" id="horizontalCluster">
+            <div class="cluster-title">⊞ CLUSTER · horizontal scaling</div>
+            <div class="workers-grid" id="hWorkersGrid"></div>
+
+            <div class="horizontal-result">
+              <div class="horizontal-result-row">
+                <span class="horizontal-result-label">Ideal time</span>
+                <div class="horizontal-result-bar"><div class="horizontal-result-fill ideal" id="hIdealBar"></div></div>
+                <span class="horizontal-result-value" id="hIdealVal">—</span>
+              </div>
+              <div class="horizontal-result-row">
+                <span class="horizontal-result-label">Actual time</span>
+                <div class="horizontal-result-bar"><div class="horizontal-result-fill actual" id="hActualBar"></div></div>
+                <span class="horizontal-result-value" id="hActualVal">—</span>
+              </div>
+              <div class="horizontal-result-row">
+                <span class="horizontal-result-label">Network cost</span>
+                <div class="horizontal-result-bar"><div class="horizontal-result-fill network" id="hNetworkBar"></div></div>
+                <span class="horizontal-result-value" id="hNetworkVal">—</span>
+              </div>
+            </div>
+
+            <div class="efficiency-display">
+              <div class="efficiency-stat">
+                <div class="efficiency-label">Parallel efficiency</div>
+                <div class="efficiency-value" id="hEfficiency">—</div>
+                <div class="efficiency-sublabel" id="hEfficiencySub">how parallel it really is</div>
+              </div>
+              <div class="efficiency-stat">
+                <div class="efficiency-label">Cost / month</div>
+                <div class="efficiency-value cost" id="hCost">—</div>
+                <div class="efficiency-sublabel" id="hCostSub">$140 per worker</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="prosCons">
+            <div class="prosCons-group pros">
+              <h4>Pros of going horizontal</h4>
+              <ul>
+                <li><strong>No ceiling.</strong> Scale past what any single machine can offer — add more boxes until you're done.</li>
+                <li><strong>Linear cost scaling.</strong> Each worker is the same price. No exponential premium for "bigger".</li>
+                <li><strong>Cheaper than premium tiers.</strong> Commodity machines beat enterprise hardware on $/throughput at most workloads.</li>
+                <li><strong>Fault tolerance.</strong> One worker dies; the rest keep going.</li>
+              </ul>
+            </div>
+            <div class="prosCons-group cons">
+              <h4>Cons of going horizontal</h4>
+              <ul>
+                <li><strong>Network overhead.</strong> Workers must talk; bandwidth and latency become real costs.</li>
+                <li><strong>Coordination complexity.</strong> Failures, retries, ordering — all on you (or your framework).</li>
+                <li><strong>Diminishing returns.</strong> 2× workers ≠ 2× speed once coordination dominates.</li>
+                <li><strong>Distributed-systems bugs.</strong> Partial failures, clock skew, split brain.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 4: RAM vs DISK =============== -->
+      <div class="scenario" id="scenario-memory">
+        <div class="stage-memory">
+          <div class="hierarchy-stack" id="hierarchyStack">
+            <!-- Levels rendered by JS -->
+          </div>
+
+          <div class="race-panel">
+            <div class="race-title">⏱ RACE · RAM vs <span id="raceComparedTier">HDD</span></div>
+            <div class="race-subtitle" id="raceSubtitle">Both queries scan the same gigabyte. One reads from RAM, the other from a hard disk. <strong style="color:var(--text-2)">Click a tier on the left</strong> to switch comparison.</div>
+
+            <div class="race-track ram" id="raceRam">
+              <div class="race-track-header">
+                <span class="race-track-name">▶ From RAM</span>
+                <span class="race-track-time" id="raceRamTime">0.0 s</span>
+              </div>
+              <div class="race-track-bar">
+                <div class="race-track-fill" id="raceRamFill"></div>
+              </div>
+              <div class="race-track-status" id="raceRamStatus">ready</div>
+            </div>
+
+            <div class="race-track disk" id="raceDisk" data-tier="hdd">
+              <div class="race-track-header">
+                <span class="race-track-name" id="raceSlowName">▶ From HDD</span>
+                <span class="race-track-time" id="raceDiskTime">0.0 s</span>
+              </div>
+              <div class="race-track-bar">
+                <div class="race-track-fill" id="raceDiskFill"></div>
+              </div>
+              <div class="race-track-status" id="raceDiskStatus">ready</div>
+            </div>
+
+            <div class="analogy-box">
+              <div class="analogy-title">▤ Human-time analogy</div>
+              <div class="analogy-body" id="analogyBody">
+                If <strong>1 nanosecond = 1 second</strong>, then fetching data from <strong>RAM</strong> takes about <code>2 minutes</code>, from an <strong>SSD</strong> takes <code>1 day</code>, and from a <strong>spinning disk</strong> takes <code>4 months</code>. That's why Spark works so hard to keep data in memory.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Narration panel -->
+    <div class="narration">
+      <div class="narration-header">
+        <div class="narration-step" id="narrStep">SCENARIO · 01</div>
+        <div class="narration-title" id="narrTitle">Compute and storage want different lives</div>
+      </div>
+      <div class="narration-body" id="narrBody">
+        <p>For decades, a database server meant <strong>one box</strong> holding both the CPUs that did the computing and the disks that held the data.</p>
+        <p>That seems natural — until you realize compute needs and storage needs grow at totally different rates. A company might 10× its data over a year but only need 2× the compute. With <strong>coupled</strong> architecture, you'd buy 10× the servers anyway.</p>
+        <p>Click the buttons below to see how each architecture handles a growing workload.</p>
+      </div>
+      <div class="narration-key" id="narrKey">
+        <strong>The shift</strong>
+        Modern systems (Spark, Snowflake, BigQuery) split storage from compute so each layer can scale on its own timeline.
+      </div>
+    </div>
+  </div>
+
+  <div class="controls" id="controls"></div>
+
+  <div class="footnote">
+    <div class="legend" style="margin-bottom: 12px">
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--executor)"></span>Compute</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--data)"></span>Storage</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--info)"></span>RAM / fast tier</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--warning)"></span>Disk / slow tier</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--danger)"></span>Network / waste</div>
+    </div>
+    <strong>Why this matters:</strong> Spark is built on all four of these ideas. It runs as a <em>horizontal</em> cluster that <em>decouples</em> compute from storage (it usually reads from S3/HDFS), it works hard to keep <em>active data in RAM</em>, and it spills to <em>disk</em> only when memory runs out. Once these foundations click, every Spark concept — partitioning, executors, shuffles, caching — has a clear "why" behind it.
+  </div>
+
+</div>
+
+<script>
+// =====================================================================
+// State
+// =====================================================================
+const COST_PER_WORKER = 80;  // $/month per commodity worker (m5.large-class)
+
+const STATE = {
+  scenario: 'decoupled',
+
+  // 1. Coupled vs Decoupled
+  coupledServers: 1,    // count of monolithic servers
+  computeNeed: 1,       // how many "units" of compute we need
+  storageNeed: 1,       // how many "units" of storage we need
+  decoupledWorkers: 1,
+  storageGB: 100,
+
+  // 2. Vertical scaling
+  verticalTierIdx: 0,
+  verticalProcessing: false,
+  verticalAbort: false,
+
+  // 3. Horizontal scaling
+  numWorkers: 1,
+  networkLatency: 1,    // multiplier — 1 = baseline, higher = slower network
+
+  // 4. Memory hierarchy
+  selectedHierarchy: null,
+  racing: false,
+  raceAbort: false,
+  raceCompare: 'hdd',   // which storage tier RAM is racing against
+};
+
+const $ = id => document.getElementById(id);
+
+function setStatus(text, mode='idle') {
+  const s = $('statusIndicator');
+  $('statusText').textContent = text;
+  s.classList.toggle('running', mode === 'running');
+}
+
+function setNarration({step, title, body, key}) {
+  $('narrStep').textContent = step;
+  $('narrTitle').textContent = title;
+  $('narrBody').innerHTML = body;
+  if (key) {
+    $('narrKey').innerHTML = `<strong>${key.title}</strong>${key.body}`;
+    $('narrKey').style.display = '';
+  } else {
+    $('narrKey').style.display = 'none';
+  }
+}
+
+const sleep = ms => new Promise(r => {
+  const t = setTimeout(r, ms);
+  const i = setInterval(() => {
+    if (STATE.verticalAbort || STATE.raceAbort) { clearTimeout(t); clearInterval(i); r(); }
+  }, 40);
+});
+
+// =====================================================================
+// SCENARIO 1: COUPLED vs DECOUPLED
+// =====================================================================
+
+function renderCoupled() {
+  const stack = $('coupledStack');
+  stack.innerHTML = '';
+
+  // To satisfy max(computeNeed, storageNeed), we need that many servers
+  const serversNeeded = Math.max(STATE.computeNeed, STATE.storageNeed);
+  STATE.coupledServers = serversNeeded;
+
+  // Distribute usage: each server contributes 1 unit of compute and 1 unit of storage,
+  // but actual usage from need is computeNeed and storageNeed
+  const totalCompute = serversNeeded;       // total available compute units
+  const totalStorage = serversNeeded;       // total available storage units
+  const usedCompute  = STATE.computeNeed;
+  const usedStorage  = STATE.storageNeed;
+  const wastedCompute = totalCompute - usedCompute;
+  const wastedStorage = totalStorage - usedStorage;
+  const totalResources = totalCompute + totalStorage;
+  const wastedPct = totalResources > 0 ? ((wastedCompute + wastedStorage) / totalResources) * 100 : 0;
+
+  // Render servers
+  for (let i = 0; i < serversNeeded; i++) {
+    const computeUsed = i < usedCompute ? 100 : 0;
+    const storageUsed = i < usedStorage ? 100 : 0;
+    const computeWasted = i < usedCompute ? 0 : 100;
+    const storageWasted = i < usedStorage ? 0 : 100;
+
+    const server = document.createElement('div');
+    server.className = 'coupled-server';
+    server.innerHTML = `
+      <div class="coupled-server-label">Server ${i+1}</div>
+      <div class="coupled-resource compute">
+        <div class="coupled-resource-name">CPU + RAM</div>
+        <div class="coupled-resource-bar">
+          <div class="coupled-resource-fill" style="width:${computeUsed}%"></div>
+          <div class="coupled-resource-wasted" style="width:${computeWasted}%"></div>
+        </div>
+        <div class="coupled-resource-text">${computeUsed > 0 ? 'in use' : 'idle ✗'}</div>
+      </div>
+      <div class="coupled-resource storage">
+        <div class="coupled-resource-name">Disk</div>
+        <div class="coupled-resource-bar">
+          <div class="coupled-resource-fill" style="width:${storageUsed}%"></div>
+          <div class="coupled-resource-wasted" style="width:${storageWasted}%"></div>
+        </div>
+        <div class="coupled-resource-text">${storageUsed > 0 ? 'in use' : 'idle ✗'}</div>
+      </div>
+    `;
+    stack.appendChild(server);
+  }
+
+  // Update waste tracker
+  $('coupledWaste').textContent = Math.round(wastedPct) + '%';
+  $('coupledWaste').classList.toggle('bad',  wastedPct > 0);
+  $('coupledWaste').classList.toggle('good', wastedPct === 0);
+}
+
+function renderDecoupled() {
+  const row = $('decoupledWorkers');
+  row.innerHTML = '';
+  for (let i = 0; i < STATE.decoupledWorkers; i++) {
+    const w = document.createElement('div');
+    w.className = 'worker-box';
+    w.innerHTML = `<span class="icon">⚙</span><span>W${i+1}</span>`;
+    row.appendChild(w);
+  }
+
+  // Storage bucket fill height proportional to GB (cap at 100% for display purposes)
+  const maxDisplay = 1000;
+  const pct = Math.min(100, (STATE.storageGB / maxDisplay) * 100);
+  $('storageBucketFill').style.height = pct + '%';
+  $('storageBucketGB').textContent = (STATE.storageGB >= 1000)
+    ? (STATE.storageGB / 1000).toFixed(1) + ' TB'
+    : STATE.storageGB + ' GB';
+}
+
+function decoupledAddCompute() {
+  STATE.computeNeed++;
+  renderCoupled();
+  STATE.decoupledWorkers++;
+  renderDecoupled();
+  updateDecoupledNarration('compute');
+}
+
+function decoupledAddStorage() {
+  STATE.storageNeed++;
+  renderCoupled();
+  STATE.storageGB += 200;
+  renderDecoupled();
+  updateDecoupledNarration('storage');
+}
+
+function decoupledReset() {
+  STATE.computeNeed = 1;
+  STATE.storageNeed = 1;
+  STATE.coupledServers = 1;
+  STATE.decoupledWorkers = 1;
+  STATE.storageGB = 100;
+  renderCoupled();
+  renderDecoupled();
+  setNarrationForScenario('decoupled');
+}
+
+function updateDecoupledNarration(action) {
+  const wastedPct = STATE.coupledServers > 0
+    ? (((Math.max(STATE.computeNeed, STATE.storageNeed) * 2) - STATE.computeNeed - STATE.storageNeed) / (Math.max(STATE.computeNeed, STATE.storageNeed) * 2)) * 100
+    : 0;
+
+  if (action === 'compute') {
+    setNarration({
+      step: 'SCENARIO · 01 · COMPUTE ADDED',
+      title: 'Look what coupled did',
+      body: `<p>You asked for more <strong style="color:var(--executor)">compute</strong>. In the <strong>coupled</strong> world that meant buying a whole new server — including disks you don't need yet.</p>
+             <p>In the <strong>decoupled</strong> world, you just spun up another worker. The storage layer didn't move.</p>
+             <p class="danger">Coupled waste: <strong>${Math.round(wastedPct)}%</strong> of paid resources sitting idle.</p>`,
+      key: { title: 'Compute and storage scale differently', body: 'Most workloads need them in totally different ratios. Coupling them forces you to over-provision one to get the other.' }
+    });
+  } else {
+    setNarration({
+      step: 'SCENARIO · 01 · STORAGE ADDED',
+      title: 'Storage grew, but coupled forced you to buy compute too',
+      body: `<p>You asked for more <strong style="color:var(--data)">storage</strong>. Coupled architecture bought a whole new server to get those disks — bundling expensive CPUs you don't need.</p>
+             <p>Decoupled just expanded the bucket. Your S3-style storage scales by the GB, independently of any cluster.</p>
+             <p class="danger">Coupled waste: <strong>${Math.round(wastedPct)}%</strong> of paid resources sitting idle.</p>`,
+      key: { title: 'The bill matters', body: 'Object storage like S3 costs ~$0.02/GB/month. CPU costs orders of magnitude more. Decoupling lets you pay for each by the rate that actually grows.' }
+    });
+  }
+}
+
+// =====================================================================
+// SCENARIO 2: VERTICAL SCALING
+// =====================================================================
+
+const VERTICAL_TIERS = [
+  { name: 'Laptop',            ram: 16,    cores: 4,   disk: 512,    cost: 50,     procTime: 60.0, ramPct: 0.07, corePct: 1, diskPct: 0.3 },
+  { name: 'm5.xlarge',         ram: 16,    cores: 4,   disk: 1000,   cost: 140,    procTime: 50.0, ramPct: 0.07, corePct: 1, diskPct: 0.5 },
+  { name: 'm5.4xlarge',        ram: 64,    cores: 16,  disk: 2000,   cost: 560,    procTime: 18.0, ramPct: 0.27, corePct: 3.6, diskPct: 1.0 },
+  { name: 'r5.8xlarge',        ram: 256,   cores: 32,  disk: 4000,   cost: 1800,   procTime: 8.0,  ramPct: 1.07, corePct: 7.1, diskPct: 2.0 },
+  { name: 'r5.24xlarge',       ram: 768,   cores: 96,  disk: 12000,  cost: 6000,   procTime: 3.5,  ramPct: 3.2,  corePct: 21.4, diskPct: 6.0 },
+  { name: 'x2gd.metal',        ram: 2048,  cores: 128, disk: 32000,  cost: 18000,  procTime: 2.0,  ramPct: 8.5,  corePct: 28.6, diskPct: 16.0 },
+  { name: 'u-24tb1.metal',     ram: 24576, cores: 448, disk: 192000, cost: 130000, procTime: 1.2,  ramPct: 100,  corePct: 100, diskPct: 100, ceiling: true },
+];
+
+function renderVertical() {
+  const tier = VERTICAL_TIERS[STATE.verticalTierIdx];
+  $('verticalTierName').textContent = tier.name;
+  $('vRamValue').textContent  = tier.ram >= 1024 ? (tier.ram/1024).toFixed(0) + ' TB' : tier.ram + ' GB';
+  $('vCoreValue').textContent = tier.cores + ' cores';
+  $('vDiskValue').textContent = tier.disk >= 1000 ? (tier.disk/1000).toFixed(0) + ' TB' : tier.disk + ' GB';
+
+  $('vRamBar').style.width  = tier.ramPct + '%';
+  $('vCoreBar').style.width = tier.corePct + '%';
+  $('vDiskBar').style.width = tier.diskPct + '%';
+
+  $('vCost').textContent = '$' + tier.cost.toLocaleString();
+  $('vCost').classList.toggle('expensive', tier.cost >= 1500 && tier.cost < 15000);
+  $('vCost').classList.toggle('crazy', tier.cost >= 15000);
+
+  $('vTimeLabel').textContent = tier.procTime.toFixed(1) + ' s';
+  $('vProcessFill').style.width = '0%';
+
+  $('verticalMachine').classList.toggle('ceiling', !!tier.ceiling);
+
+  // Update steppers
+  if ($('vTierMinus')) $('vTierMinus').disabled = STATE.verticalTierIdx === 0;
+  if ($('vTierPlus'))  $('vTierPlus').disabled  = STATE.verticalTierIdx === VERTICAL_TIERS.length - 1;
+  if ($('vTierValue')) $('vTierValue').textContent = (STATE.verticalTierIdx + 1) + '/' + VERTICAL_TIERS.length;
+}
+
+async function runVerticalProcess() {
+  if (STATE.verticalProcessing) return;
+  STATE.verticalProcessing = true;
+  STATE.verticalAbort = false;
+  setStatus('processing', 'running');
+  const tier = VERTICAL_TIERS[STATE.verticalTierIdx];
+  const fill = $('vProcessFill');
+  fill.style.width = '0%';
+  const startTime = performance.now();
+  const durationMs = tier.procTime * 1000 * 0.05; // 5% of real time for the demo
+  while (true) {
+    if (STATE.verticalAbort) break;
+    const elapsed = performance.now() - startTime;
+    const pct = Math.min(100, (elapsed / durationMs) * 100);
+    fill.style.width = pct + '%';
+    if (pct >= 100) break;
+    await sleep(30);
+  }
+  STATE.verticalProcessing = false;
+  setStatus('idle', 'idle');
+}
+
+function updateVerticalNarration() {
+  const tier = VERTICAL_TIERS[STATE.verticalTierIdx];
+  if (tier.ceiling) {
+    setNarration({
+      step: 'SCENARIO · 02 · CEILING',
+      title: 'You hit the wall',
+      body: `<p>This is one of the largest single instances Amazon sells. <strong>24 TB of RAM, 448 cores</strong>, costing <strong class="danger">$130,000/month</strong>.</p>
+             <p>And there's no tier 8. You physically <em>cannot</em> buy a bigger single machine. If your data outgrows this, vertical scaling has nothing left to offer.</p>
+             <p>This is the moment you have to go horizontal — adding more boxes to a cluster.</p>`,
+      key: { title: 'The ceiling exists', body: 'No matter how much money you have, a single machine has a hard physical maximum. The internet runs on horizontal scale precisely because vertical runs out.' }
+    });
+  } else if (tier.cost >= 1500) {
+    setNarration({
+      step: 'SCENARIO · 02 · COST CURVE',
+      title: 'Cost is climbing faster than power',
+      body: `<p>Notice the pattern: 4× the RAM costs <em>much</em> more than 4× the dollars. The price of high-end hardware grows non-linearly because supply is small and the engineering is harder.</p>
+             <p>You're at <strong>${tier.name}</strong> — ${tier.ram >= 1024 ? (tier.ram/1024) + ' TB' : tier.ram + ' GB'} RAM for <strong>$${tier.cost.toLocaleString()}/month</strong>. The processing time keeps dropping, but each dollar buys less performance than the last.</p>`,
+      key: { title: 'Returns diminish', body: 'Doubling specs roughly doubles speed, but more than doubles cost. At the top tiers, you pay a huge premium for the privilege of staying on one machine.' }
+    });
+  } else {
+    setNarration({
+      step: 'SCENARIO · 02 · UPGRADING',
+      title: 'More RAM, more cores, more speed',
+      body: `<p>You're scaling <strong>up</strong> — buying a bigger box. Same architecture, beefier specs.</p>
+             <p><strong>${tier.name}</strong>: ${tier.ram >= 1024 ? (tier.ram/1024) + ' TB' : tier.ram + ' GB'} RAM, ${tier.cores} cores, $${tier.cost}/month. Processing time: ${tier.procTime}s on a 1 TB dataset.</p>
+             <p>Click <strong>Process</strong> to see how fast this tier handles it, then keep scaling up to find where the wheels come off.</p>`,
+      key: { title: 'Vertical = simple', body: 'No network, no coordination. The only knob is "bigger machine." But every knob has an end.' }
+    });
+  }
+}
+
+function verticalStepUp() {
+  if (STATE.verticalTierIdx < VERTICAL_TIERS.length - 1) {
+    STATE.verticalTierIdx++;
+    renderVertical();
+    updateVerticalNarration();
+  }
+}
+function verticalStepDown() {
+  if (STATE.verticalTierIdx > 0) {
+    STATE.verticalTierIdx--;
+    renderVertical();
+    updateVerticalNarration();
+  }
+}
+
+// =====================================================================
+// SCENARIO 3: HORIZONTAL SCALING
+// =====================================================================
+
+let packetIntervalId = null;
+
+function renderHorizontal() {
+  const grid = $('hWorkersGrid');
+  grid.innerHTML = '';
+  for (let i = 0; i < STATE.numWorkers; i++) {
+    const w = document.createElement('div');
+    w.className = 'h-worker processing';
+    w.id = `h-worker-${i}`;
+    w.innerHTML = `
+      <span class="icon">⚙</span>
+      <span class="name">Worker ${i+1}</span>
+      <span class="data-share">${Math.round(1000 / STATE.numWorkers)} GB</span>
+    `;
+    grid.appendChild(w);
+  }
+
+  // Cost calculations
+  const baseTime = 60; // seconds on one worker for 1 TB
+  const idealTime = baseTime / STATE.numWorkers;
+
+  // Network overhead scales with N (more pairs talk) and worker count - 1
+  // Use a model: overhead = baseOverhead * (N - 1) * latency multiplier
+  const baseOverhead = 1.2;  // seconds per extra worker
+  const networkCost = STATE.numWorkers === 1 ? 0 : baseOverhead * Math.log2(STATE.numWorkers) * 1.5 * STATE.networkLatency;
+  const actualTime = idealTime + networkCost;
+
+  // Display bars relative to single-worker baseline
+  $('hIdealBar').style.width   = ((idealTime / baseTime) * 100) + '%';
+  $('hActualBar').style.width  = ((actualTime / baseTime) * 100) + '%';
+  $('hNetworkBar').style.width = ((networkCost / baseTime) * 100) + '%';
+  $('hIdealVal').textContent   = idealTime.toFixed(1) + ' s';
+  $('hActualVal').textContent  = actualTime.toFixed(1) + ' s';
+  $('hNetworkVal').textContent = networkCost.toFixed(1) + ' s';
+
+  const efficiency = idealTime / actualTime;
+  const effPct = Math.round(efficiency * 100);
+  $('hEfficiency').textContent = effPct + '%';
+  $('hEfficiency').classList.toggle('poor', effPct < 75 && effPct >= 50);
+  $('hEfficiency').classList.toggle('bad',  effPct < 50);
+
+  // Cost: linear with workers — this is the horizontal story
+  const monthlyCost = STATE.numWorkers * COST_PER_WORKER;
+  $('hCost').textContent = '$' + monthlyCost.toLocaleString();
+  $('hCostSub').textContent = `$${COST_PER_WORKER} × ${STATE.numWorkers} worker${STATE.numWorkers === 1 ? '' : 's'}`;
+
+  // Update stepper labels
+  if ($('hWorkerVal')) $('hWorkerVal').textContent = STATE.numWorkers;
+
+  // Restart packet animation
+  startPacketAnimation();
+
+  updateHorizontalNarration();
+}
+
+function startPacketAnimation() {
+  if (packetIntervalId) clearInterval(packetIntervalId);
+  if (STATE.scenario !== 'horizontal') return;
+  if (STATE.numWorkers < 2) return;
+
+  packetIntervalId = setInterval(() => {
+    if (STATE.scenario !== 'horizontal') {
+      clearInterval(packetIntervalId);
+      packetIntervalId = null;
+      return;
+    }
+    // Pick two random workers and shoot a packet between them
+    const a = Math.floor(Math.random() * STATE.numWorkers);
+    let b = Math.floor(Math.random() * STATE.numWorkers);
+    while (b === a) b = Math.floor(Math.random() * STATE.numWorkers);
+    flyPacket(`h-worker-${a}`, `h-worker-${b}`);
+  }, Math.max(200, 700 - STATE.numWorkers * 60));
+}
+
+function flyPacket(fromId, toId) {
+  const from = $(fromId);
+  const to   = $(toId);
+  if (!from || !to) return;
+  const stage = $('horizontalCluster');
+  const stageRect = stage.getBoundingClientRect();
+  const fr = from.getBoundingClientRect();
+  const tr = to.getBoundingClientRect();
+
+  const x1 = fr.left + fr.width/2 - stageRect.left - 3;
+  const y1 = fr.top  + fr.height/2 - stageRect.top  - 3;
+  const x2 = tr.left + tr.width/2 - stageRect.left - 3;
+  const y2 = tr.top  + tr.height/2 - stageRect.top  - 3;
+
+  const p = document.createElement('div');
+  p.className = 'packet';
+  p.style.left = x1 + 'px';
+  p.style.top  = y1 + 'px';
+  p.style.transition = 'left .6s linear, top .6s linear, opacity .2s';
+  stage.appendChild(p);
+  // Force reflow
+  void p.offsetWidth;
+  p.style.left = x2 + 'px';
+  p.style.top  = y2 + 'px';
+  setTimeout(() => p.style.opacity = '0', 500);
+  setTimeout(() => p.remove(), 700);
+}
+
+function horizontalAddWorker() {
+  if (STATE.numWorkers < 16) {
+    STATE.numWorkers++;
+    renderHorizontal();
+  }
+}
+function horizontalRemoveWorker() {
+  if (STATE.numWorkers > 1) {
+    STATE.numWorkers--;
+    renderHorizontal();
+  }
+}
+
+function updateHorizontalNarration() {
+  const baseTime = 60;
+  const idealTime = baseTime / STATE.numWorkers;
+  const networkCost = STATE.numWorkers === 1 ? 0 : 1.2 * Math.log2(STATE.numWorkers) * 1.5 * STATE.networkLatency;
+  const actualTime = idealTime + networkCost;
+  const efficiency = idealTime / actualTime;
+  const effPct = Math.round(efficiency * 100);
+  const monthlyCost = STATE.numWorkers * COST_PER_WORKER;
+  const N = STATE.numWorkers;
+
+  if (N === 1) {
+    setNarration({
+      step: 'SCENARIO · 03 · ONE WORKER',
+      title: 'Starting point: one worker',
+      body: `<p>A single machine takes <strong>60 seconds</strong> to process this 1 TB dataset, at <strong style="color:var(--data)">$${monthlyCost}/month</strong>. Nothing's parallel yet — this is the baseline.</p>
+             <p>Click <strong>+</strong> below to add workers. Watch what happens to processing time, to the red "network cost" line, and to the cost.</p>`,
+      key: { title: 'Three things to track', body: '<strong>Ideal time</strong> assumes perfect parallel speedup. <strong>Actual time</strong> includes coordination. <strong>Cost</strong> grows linearly — every new worker is the same $80.' }
+    });
+  } else if (effPct >= 85) {
+    // Compare to vertical: cluster total RAM ≈ N × 8 GB. Find vertical tier with similar RAM.
+    let verticalNote = '';
+    if (N === 2) verticalNote = `At <strong>$${monthlyCost}/mo</strong>, horizontal is already cheaper than a single m5.xlarge ($140) for the same throughput.`;
+    else if (N === 3) verticalNote = `At <strong>$${monthlyCost}/mo</strong>, you're matching what m5.4xlarge ($560) would cost — and getting 3× the redundancy.`;
+    else verticalNote = `At <strong>$${monthlyCost}/mo</strong>, horizontal is already much cheaper than the vertical tier that handles this throughput (m5.4xlarge: $560).`;
+
+    setNarration({
+      step: 'SCENARIO · 03 · GOOD SCALING',
+      title: 'Sweet spot — nearly linear speedup',
+      body: `<p>${N} workers, ${effPct}% efficiency. Time dropped from 60s to <strong>${actualTime.toFixed(1)}s</strong>.</p>
+             <p>Network overhead is still small (~${networkCost.toFixed(1)}s) because workers don't need to talk much at this scale.</p>
+             <p>${verticalNote}</p>`,
+      key: { title: 'Cost grows linearly', body: 'Add a worker, add $80. No price cliff like vertical\'s exponential climb. Predictable and capped only by your budget.' }
+    });
+  } else if (effPct >= 60) {
+    // Cluster RAM ≈ N × 8 GB; at N=8 → 64 GB, comparable to m5.4xlarge ($560)
+    // At N=12 → 96 GB, comparable to r5.4xlarge ($1,500)
+    let verticalNote = '';
+    if (N <= 8)       verticalNote = `Equivalent vertical tier: <strong>m5.4xlarge at $560/mo</strong>. You're paying <strong style="color:var(--result)">$${monthlyCost}</strong> — still cheaper, and you can lose a worker without dying.`;
+    else              verticalNote = `Equivalent vertical tier: <strong>r5.4xlarge at $1,500/mo</strong>. Horizontal costs <strong style="color:var(--result)">$${monthlyCost}</strong> — meaningfully cheaper, with fault tolerance thrown in.`;
+
+    setNarration({
+      step: 'SCENARIO · 03 · DIMINISHING RETURNS',
+      title: 'Network cost is catching up',
+      body: `<p>${N} workers, only ${effPct}% efficient. Ideal time would be ${idealTime.toFixed(1)}s, but you're actually taking <strong>${actualTime.toFixed(1)}s</strong>.</p>
+             <p>The gap is the <span class="danger">network cost</span>: ${networkCost.toFixed(1)}s shuffling data and waiting for stragglers. Every extra worker contributes less.</p>
+             <p>${verticalNote}</p>`,
+      key: { title: 'Amdahl\'s Law', body: 'Non-parallel parts of your job (coordination, network) put a floor on speed. But cost keeps climbing linearly — so the cost <em>per unit of work</em> starts rising.' }
+    });
+  } else {
+    // At N≈16: cluster RAM ≈ 128 GB. Vertical equivalent: r5.4xlarge ($1,500) or r5.8xlarge ($1,800)
+    setNarration({
+      step: 'SCENARIO · 03 · TOO MANY COOKS',
+      title: 'Adding workers is making things worse',
+      body: `<p>${N} workers, ${effPct}% efficient, costing <strong style="color:var(--data)">$${monthlyCost}/mo</strong>. You're paying for compute that mostly sits in network wait.</p>
+             <p class="danger">Adding the next worker may actually <em>increase</em> total time.</p>
+             <p>Vertical at this throughput would be <strong>r5.8xlarge at $1,800/mo</strong> — horizontal is still cheaper, but you're spending real money for diminishing returns.</p>`,
+      key: { title: 'Right-size the cluster', body: 'More workers ≠ better. Spark gives you the dials — partition count, executor size, shuffle parallelism — to land in the sweet spot.' }
+    });
+  }
+}
+
+// =====================================================================
+// SCENARIO 4: RAM vs DISK
+// =====================================================================
+
+// Real latencies in nanoseconds, with human-time analogy (if 1 ns = 1 second)
+const HIERARCHY = [
+  { id: 'cpu',   name: 'CPU register',  speed: '< 1 ns',     size: '< 1 KB',  cost: '—',         human: '1 second' },
+  { id: 'cache', name: 'L1/L2/L3 cache',speed: '1–10 ns',    size: '~100 MB', cost: '$$$$$',     human: '1–10 seconds' },
+  { id: 'ram',   name: 'RAM (DRAM)',    speed: '~100 ns',    size: 'GB–TB',   cost: '$$$$',      human: '~2 minutes' },
+  { id: 'ssd',   name: 'SSD (NVMe)',    speed: '~100 µs',    size: 'TB',      cost: '$$',        human: '~1 day' },
+  { id: 'hdd',   name: 'HDD (spinning)',speed: '~10 ms',     size: 'TB',      cost: '$',         human: '~4 months' },
+  { id: 'net',   name: 'Network (S3)',  speed: '~50 ms',     size: 'unlimited',cost: '~$0.02/GB','human': '~1.5 years' },
+];
+
+function renderHierarchy() {
+  const stack = $('hierarchyStack');
+  stack.innerHTML = '';
+  HIERARCHY.forEach(level => {
+    const el = document.createElement('div');
+    el.className = 'hierarchy-level';
+    el.dataset.tier = level.id;
+    if (STATE.selectedHierarchy === level.id) el.classList.add('active');
+    el.innerHTML = `
+      <div class="hierarchy-level-name">
+        <span class="name">${level.name}</span>
+        <span class="speed">${level.speed}</span>
+      </div>
+      <div class="hierarchy-level-detail">
+        <span class="size">${level.size}</span>
+        <span class="cost">${level.cost}</span>
+      </div>
+    `;
+    el.addEventListener('click', () => selectHierarchy(level.id));
+    stack.appendChild(el);
+  });
+}
+
+function selectHierarchy(id) {
+  STATE.selectedHierarchy = id;
+  document.querySelectorAll('.hierarchy-level').forEach(el => {
+    el.classList.toggle('active', el.dataset.tier === id);
+  });
+  const level = HIERARCHY.find(l => l.id === id);
+
+  // If this tier is a "slow side" the race supports, switch the comparison.
+  // (If a race is mid-flight, abort it so the labels stay coherent.)
+  if (RACE_TIERS[id] && STATE.raceCompare !== id) {
+    STATE.raceCompare = id;
+    if (STATE.racing) resetRace();
+    renderRaceLabels();
+  }
+
+  $('analogyBody').innerHTML =
+    `If <strong>1 nanosecond = 1 second</strong>, fetching from <strong style="color:var(--info)">${level.name}</strong> takes about <code>${level.human}</code>. ${getTierLesson(id)}`;
+
+  setNarration({
+    step: 'SCENARIO · 04 · ' + level.name.toUpperCase(),
+    title: `${level.name} — ${level.speed}`,
+    body: `<p>Speed: <strong>${level.speed}</strong>. Capacity: <strong>${level.size}</strong>. Cost: <strong>${level.cost}</strong>.</p>
+           <p>${getTierExplanation(id)}</p>`,
+    key: { title: 'Tradeoff', body: getTierTradeoff(id) }
+  });
+}
+
+function getTierLesson(id) {
+  const lessons = {
+    cpu:   `CPU registers are the fastest thing in your computer — but there are only a handful of them.`,
+    cache: `Cache is small but blazing fast. The CPU keeps the most-used bytes here.`,
+    ram:   `<strong>This is where Spark wants your data.</strong> RAM is fast enough that processing is essentially free.`,
+    ssd:   `An SSD is ~1000× slower than RAM. Spark spills here when it runs out of memory.`,
+    hdd:   `A spinning disk is ~100,000× slower than RAM. Reading 1 GB takes minutes, not microseconds.`,
+    net:   `Reading over the network is even slower than disk. This is why Spark places work next to the data when possible.`,
+  };
+  return lessons[id] || '';
+}
+
+function getTierExplanation(id) {
+  const explanations = {
+    cpu:   'Registers hold values mid-calculation. Multiplying two numbers? They live here for the few nanoseconds of the operation. You can\'t store data here — only the immediate working set.',
+    cache: 'Caches keep recently-used memory close to the CPU. Hardware does this automatically. Code that touches the same memory repeatedly stays "cache hot" and runs orders of magnitude faster than code that wanders.',
+    ram:   'Main memory. The thing you brag about when you buy a laptop. Fast enough that for most workloads, "in RAM" means "essentially free to access." Limited by what fits in your machine.',
+    ssd:   'Persistent storage with no moving parts. Modern NVMe SSDs are fast — but still 1000× slower than RAM. Random access pattern matters less than on spinning disks.',
+    hdd:   'A platter spinning at thousands of RPM with a head that has to physically seek. Sequential reads are okay (~100 MB/s); random reads are terrible (~100/sec). Mostly used for cold data now.',
+    net:   'Reading from S3 or HDFS over the network. Latency dominates: each request has a fixed ~50ms minimum, regardless of payload size. Cheap to store, slow to read.',
+  };
+  return explanations[id] || '';
+}
+
+function getTierTradeoff(id) {
+  const tradeoffs = {
+    cpu:   'Fastest, smallest, no choice — the CPU manages it.',
+    cache: 'You can\'t directly control this, but writing cache-friendly code (sequential access, small working sets) helps the hardware help you.',
+    ram:   'Fastest tier you can actively use. Spark <code>.cache()</code> exists to keep data here between operations.',
+    ssd:   'Spark spills shuffle data here when memory fills. Slow compared to RAM, but still survives across queries.',
+    hdd:   'Cold storage. Spark reads source data from here once and gets it into memory ASAP.',
+    net:   'Where modern data lakes live. Slow but cheap and infinite.',
+  };
+  return tradeoffs[id] || '';
+}
+
+// Race configurations — one per "slow tier" that can be compared against RAM.
+// realTime: what we display as "real-world" seconds for 1 GB
+// animationMs: visual race duration (compressed for usability)
+const RACE_TIERS = {
+  ssd: {
+    label: 'SSD',
+    fromLabel: 'an SSD',
+    realTime: 0.48,    // exact 12× factor vs RAM's 0.04s — realistic for 1 GB random SSD reads
+    animationMs: 1600, // 2x RAM's 800ms — visible gap but quick
+  },
+  hdd: {
+    label: 'HDD',
+    fromLabel: 'a hard disk',
+    realTime: 10.0,    // ~10s for 1 GB on a spinning disk
+    animationMs: 8000,
+  },
+  net: {
+    label: 'Network (S3)',
+    fromLabel: 'S3 over the network',
+    realTime: 8.0,     // ~8s for 1 GB from S3 typical
+    animationMs: 6500,
+  },
+};
+
+function renderRaceLabels() {
+  const tier = RACE_TIERS[STATE.raceCompare];
+  $('raceComparedTier').textContent = tier.label;
+  $('raceSlowName').textContent = '▶ From ' + tier.label;
+  $('raceSubtitle').innerHTML =
+    `Both queries scan the same gigabyte. One reads from RAM, the other from ${tier.fromLabel}. ` +
+    `<strong style="color:var(--text-2)">Click another tier on the left</strong> to switch comparison.`;
+  $('raceDisk').dataset.tier = STATE.raceCompare;
+
+  // Reset bar fills and times so the new comparison starts clean
+  $('raceRamFill').style.width = '0%';
+  $('raceDiskFill').style.width = '0%';
+  $('raceRamTime').textContent = '0.0 s';
+  $('raceDiskTime').textContent = '0.0 s';
+  $('raceRamStatus').textContent = 'ready';
+  $('raceDiskStatus').textContent = 'ready';
+  $('raceRam').classList.remove('done');
+  $('raceDisk').classList.remove('done');
+}
+
+function getRaceLesson(tier) {
+  return ({
+    ssd: 'SSDs are fast — but still ~12× slower than RAM. When Spark "spills to disk" because memory runs out, this is the penalty. NVMe SSDs make spilling tolerable; RAM is still strictly faster.',
+    hdd: 'HDD took 10 seconds for the same gigabyte. This is why Spark works so hard to keep data in memory — every spinning-disk read is roughly 250 RAM reads worth of waiting.',
+    net: 'Reading from S3 is nearly as slow as a spinning disk, with one upside: storage is infinite and cheap. This is why modern data lakes pair object storage (slow but cheap) with in-memory compute (fast but expensive).',
+  })[tier] || '';
+}
+
+function getRaceTakeaway(tier) {
+  return ({
+    ssd: 'Spark spills shuffle data to local SSD when memory fills. Bearable, but you can usually fix it by giving executors more RAM or repartitioning.',
+    hdd: 'MapReduce wrote intermediate results to HDD between stages. Spark keeps them in memory. That single change can make pipelines 10-100× faster.',
+    net: 'Spark reads from S3 once into memory, then caches. Re-reading from S3 in a loop is the #1 way to make a fast pipeline slow.',
+  })[tier] || '';
+}
+
+async function runRace() {
+  if (STATE.racing) return;
+  STATE.racing = true;
+  STATE.raceAbort = false;
+  setStatus('racing', 'running');
+
+  const tier = RACE_TIERS[STATE.raceCompare];
+
+  // Reset both tracks
+  $('raceRamFill').style.width = '0%';
+  $('raceDiskFill').style.width = '0%';
+  $('raceRamTime').textContent = '0.0 s';
+  $('raceDiskTime').textContent = '0.0 s';
+  $('raceRamStatus').textContent = 'running…';
+  $('raceDiskStatus').textContent = 'running…';
+  $('raceRam').classList.remove('done');
+  $('raceDisk').classList.remove('done');
+
+  // RAM is fixed at 0.04s real / 800ms visual.
+  // The slow side varies by which tier was selected.
+  const ramDuration  = 800;
+  const slowDuration = tier.animationMs;
+  const ramRealTime  = 0.04;
+  const slowRealTime = tier.realTime;
+
+  const start = performance.now();
+  let ramDone = false, slowDone = false;
+  while (!ramDone || !slowDone) {
+    if (STATE.raceAbort) break;
+    const elapsed = performance.now() - start;
+
+    // RAM progress
+    if (!ramDone) {
+      const pct = Math.min(100, (elapsed / ramDuration) * 100);
+      $('raceRamFill').style.width = pct + '%';
+      const fakeT = (elapsed / ramDuration) * ramRealTime;
+      $('raceRamTime').textContent = fakeT.toFixed(2) + ' s';
+      if (pct >= 100) {
+        ramDone = true;
+        $('raceRamFill').style.width = '100%';
+        $('raceRamTime').textContent = ramRealTime.toFixed(2) + ' s';
+        $('raceRamStatus').textContent = '✓ DONE — ' + ramRealTime.toFixed(2) + ' s';
+        $('raceRam').classList.add('done');
+      }
+    }
+    // Slow side progress
+    if (!slowDone) {
+      const pct = Math.min(100, (elapsed / slowDuration) * 100);
+      $('raceDiskFill').style.width = pct + '%';
+      const fakeT = (elapsed / slowDuration) * slowRealTime;
+      $('raceDiskTime').textContent = fakeT.toFixed(2) + ' s';
+      if (pct >= 100) {
+        slowDone = true;
+        $('raceDiskFill').style.width = '100%';
+        $('raceDiskTime').textContent = slowRealTime.toFixed(2) + ' s';
+        $('raceDiskStatus').textContent = '✓ DONE — ' + slowRealTime.toFixed(2) + ' s';
+        $('raceDisk').classList.add('done');
+      }
+    }
+
+    if (!ramDone || !slowDone) await sleep(50);
+  }
+
+  STATE.racing = false;
+
+  if (!STATE.raceAbort) {
+    setStatus('done', 'idle');
+    const factor = Math.round(slowRealTime / ramRealTime);
+    setNarration({
+      step: 'SCENARIO · 04 · RACE COMPLETE',
+      title: `RAM won by ~${factor}×`,
+      body: `<p>RAM finished in <strong>${ramRealTime.toFixed(2)} seconds</strong>. ${tier.label} took <strong>${slowRealTime.toFixed(2)} seconds</strong> for the same gigabyte.</p>
+             <p>${getRaceLesson(STATE.raceCompare)}</p>
+             <p>Click any other storage tier on the left to switch the comparison, then race again.</p>`,
+      key: { title: 'Why this matters for Spark', body: getRaceTakeaway(STATE.raceCompare) }
+    });
+  }
+}
+
+function resetRace() {
+  STATE.raceAbort = true;     // signal running loop (if any) to break
+  STATE.racing = false;
+  $('raceRamFill').style.width = '0%';
+  $('raceDiskFill').style.width = '0%';
+  $('raceRamTime').textContent = '0.0 s';
+  $('raceDiskTime').textContent = '0.0 s';
+  $('raceRamStatus').textContent = 'ready';
+  $('raceDiskStatus').textContent = 'ready';
+  $('raceRam').classList.remove('done');
+  $('raceDisk').classList.remove('done');
+  // Note: do NOT clear raceAbort here — runRace clears it on its next start.
+  // Clearing it now races with the running loop, which may not have ticked yet.
+  setStatus('idle', 'idle');
+}
+
+// =====================================================================
+// Scenario switching & controls
+// =====================================================================
+
+function setNarrationForScenario(name) {
+  setStatus('idle', 'idle');
+  if (name === 'decoupled') {
+    $('scenarioTitle').textContent = 'Compute & Storage';
+    $('scenarioSubtitle').textContent = 'Coupled vs decoupled architectures';
+    setNarration({
+      step: 'SCENARIO · 01',
+      title: 'Compute and storage want different lives',
+      body: `<p>For decades, a database server meant <strong>one box</strong> holding both the CPUs that did the computing and the disks that held the data.</p>
+             <p>That seems natural — until you realize compute needs and storage needs grow at totally different rates. A company might 10× its data over a year but only need 2× the compute. With <strong>coupled</strong> architecture, you'd buy 10× the servers anyway.</p>
+             <p>Click the buttons below to see how each architecture handles a growing workload.</p>`,
+      key: { title: 'The shift', body: 'Modern systems (Spark, Snowflake, BigQuery) split storage from compute so each layer can scale on its own timeline.' }
+    });
+  } else if (name === 'vertical') {
+    $('scenarioTitle').textContent = 'Vertical Scaling';
+    $('scenarioSubtitle').textContent = 'Make the machine bigger';
+    updateVerticalNarration();
+  } else if (name === 'horizontal') {
+    $('scenarioTitle').textContent = 'Horizontal Scaling';
+    $('scenarioSubtitle').textContent = 'Add more machines';
+    updateHorizontalNarration();
+  } else if (name === 'memory') {
+    $('scenarioTitle').textContent = 'RAM vs Disk';
+    $('scenarioSubtitle').textContent = 'The memory hierarchy and why it matters';
+    setNarration({
+      step: 'SCENARIO · 04',
+      title: 'Not all bytes are equal',
+      body: `<p>A modern computer has several places it can store and access data — and they differ in speed by <strong>millions</strong> of times.</p>
+             <p>Click any tier on the left to learn about it, or click <strong>Start Race</strong> below to watch RAM and disk process the same 1 GB side-by-side.</p>`,
+      key: { title: 'Why this matters', body: 'Every Spark optimization — caching, broadcast joins, columnar formats — is fundamentally about keeping data on a faster tier of this hierarchy.' }
+    });
+  }
+}
+
+function switchScenario(name) {
+  STATE.scenario = name;
+  // Stop any cross-scenario animations
+  if (packetIntervalId) { clearInterval(packetIntervalId); packetIntervalId = null; }
+  STATE.verticalAbort = true;
+  STATE.raceAbort = true;
+  setTimeout(() => { STATE.verticalAbort = false; STATE.raceAbort = false; }, 100);
+
+  document.querySelectorAll('.scenario').forEach(s => s.classList.remove('active'));
+  $('scenario-' + name).classList.add('active');
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.scenario === name);
+  });
+  renderControls(name);
+  setNarrationForScenario(name);
+
+  if (name === 'decoupled') {
+    renderCoupled();
+    renderDecoupled();
+  } else if (name === 'vertical') {
+    renderVertical();
+  } else if (name === 'horizontal') {
+    renderHorizontal();
+  } else if (name === 'memory') {
+    renderHierarchy();
+  }
+}
+
+function renderControls(name) {
+  const c = $('controls');
+  if (name === 'decoupled') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Watch both architectures grow side-by-side as needs change.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="addComputeBtn">+ Need more compute</button>
+        <button class="btn" id="addStorageBtn">+ Need more storage</button>
+        <button class="btn" id="resetBtn">↺ Reset</button>
+      </div>
+    `;
+    $('addComputeBtn').onclick = decoupledAddCompute;
+    $('addStorageBtn').onclick = decoupledAddStorage;
+    $('resetBtn').onclick = decoupledReset;
+  } else if (name === 'vertical') {
+    c.innerHTML = `
+      <div class="control-group">
+        <span class="control-label">Machine tier</span>
+        <div class="stepper">
+          <button id="vTierMinus">−</button>
+          <span class="stepper-value" id="vTierValue">1/7</span>
+          <button id="vTierPlus">+</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset</button>
+        <button class="btn btn-primary" id="processBtn">▶ Process</button>
+      </div>
+    `;
+    $('vTierMinus').onclick = verticalStepDown;
+    $('vTierPlus').onclick  = verticalStepUp;
+    $('resetBtn').onclick = () => { STATE.verticalTierIdx = 0; renderVertical(); updateVerticalNarration(); };
+    $('processBtn').onclick = runVerticalProcess;
+    // Set initial stepper state
+    setTimeout(() => {
+      if ($('vTierMinus')) $('vTierMinus').disabled = STATE.verticalTierIdx === 0;
+      if ($('vTierPlus'))  $('vTierPlus').disabled  = STATE.verticalTierIdx === VERTICAL_TIERS.length - 1;
+    }, 0);
+  } else if (name === 'horizontal') {
+    c.innerHTML = `
+      <div class="control-group">
+        <span class="control-label">Workers</span>
+        <div class="stepper">
+          <button id="hWorkerMinus">−</button>
+          <span class="stepper-value" id="hWorkerVal">${STATE.numWorkers}</span>
+          <button id="hWorkerPlus">+</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset to 1</button>
+      </div>
+    `;
+    $('hWorkerMinus').onclick = horizontalRemoveWorker;
+    $('hWorkerPlus').onclick  = horizontalAddWorker;
+    $('resetBtn').onclick = () => { STATE.numWorkers = 1; renderHorizontal(); };
+  } else if (name === 'memory') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Click any tier on the left to inspect it. Run the race to see RAM vs disk in real time.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset</button>
+        <button class="btn btn-primary" id="raceBtn">▶ Start Race</button>
+      </div>
+    `;
+    $('resetBtn').onclick = resetRace;
+    $('raceBtn').onclick  = runRace;
+  }
+}
+
+// =====================================================================
+// Init
+// =====================================================================
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => switchScenario(t.dataset.scenario));
+});
+
+switchScenario('decoupled');
+</script>
+</body>
+</html>

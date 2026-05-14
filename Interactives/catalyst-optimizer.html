@@ -1,0 +1,1750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spark — Inside the Catalyst Optimizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:           #0a0e1a;
+    --surface:      #131826;
+    --surface-2:    #1c2333;
+    --surface-3:    #252d40;
+    --border:       #2a3447;
+    --border-bright:#3a4660;
+    --text:         #e8ecef;
+    --text-2:       #8b95a6;
+    --text-3:       #5a6478;
+    --driver:       #e25a1c;
+    --driver-glow:  rgba(226,90,28,.35);
+    --executor:     #00d9b8;
+    --executor-glow:rgba(0,217,184,.3);
+    --data:         #ffc857;
+    --result:       #4ade80;
+    --shuffle:      #c084fc;
+    --shuffle-glow: rgba(192,132,252,.3);
+    --info:         #60a5fa;
+    --info-glow:    rgba(96,165,250,.3);
+    --danger:       #ef4444;
+    --warning:      #fbbf24;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --sans: 'Sora', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-weight: 300;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  body {
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(192,132,252,.06), transparent),
+      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(226,90,28,.05), transparent),
+      var(--bg);
+    background-attachment: fixed;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px);
+    background-size: 32px 32px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 48px 32px 80px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ---- Header ---- */
+  header { margin-bottom: 40px; border-bottom: 1px solid var(--border); padding-bottom: 32px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .25em;
+    text-transform: uppercase;
+    color: var(--shuffle);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .eyebrow::before { content: ''; width: 24px; height: 1px; background: var(--shuffle); }
+  h1 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(34px, 4.8vw, 52px);
+    line-height: 1.05;
+    letter-spacing: -.03em;
+    margin-bottom: 16px;
+  }
+  h1 .accent  { color: var(--shuffle); }
+  .lead {
+    color: var(--text-2);
+    font-size: 17px;
+    max-width: 720px;
+    font-weight: 300;
+  }
+  .lead .term { color: var(--text); font-weight: 400; }
+
+  /* ---- Tabs ---- */
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+  .tab {
+    flex: 1 1 auto; min-width: 0;
+    padding: 12px 18px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .04em;
+    background: transparent;
+    color: var(--text-2);
+    border: 1px solid transparent;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: all .2s;
+    text-align: left;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .tab:hover { color: var(--text); background: var(--surface-2); }
+  .tab.active { background: var(--surface-3); color: var(--text); border-color: var(--border-bright); }
+  .tab-num {
+    font-size: 10px;
+    color: var(--text-3);
+    padding: 2px 6px;
+    background: var(--bg);
+    border-radius: 4px;
+  }
+  .tab.active .tab-num { background: var(--shuffle); color: white; }
+
+  /* ---- Main layout ---- */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 980px) { .main { grid-template-columns: 1fr; } }
+
+  /* ---- Canvas ---- */
+  .canvas {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+    min-height: 640px;
+    position: relative;
+    overflow: hidden;
+  }
+  .canvas-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 22px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .canvas-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-2);
+    letter-spacing: .05em;
+  }
+  .canvas-title .label { color: var(--text); font-weight: 500; }
+  .scenario-status {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .status-dot {
+    width: 6px; height: 6px;
+    background: var(--text-3);
+    border-radius: 50%;
+    transition: all .3s;
+  }
+  .scenario-status.running .status-dot {
+    background: var(--shuffle);
+    box-shadow: 0 0 8px var(--shuffle-glow);
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 0%,100% {opacity:1} 50% {opacity:.4} }
+
+  /* Scenario container */
+  .scenario { display: none; }
+  .scenario.active { display: block; }
+
+  /* =================================================================
+     SHARED: code block & plan tree
+     ================================================================= */
+  .query-block {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--shuffle);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.7;
+    margin-bottom: 18px;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .query-block .kw     { color: var(--shuffle); }
+  .query-block .ident  { color: var(--text); }
+  .query-block .str    { color: var(--data); }
+  .query-block .num    { color: var(--info); }
+  .query-block .method { color: var(--info); }
+  .query-block .comment{ color: var(--text-3); font-style: italic; }
+
+  /* File schema strip — sits under the query block to ground the column list */
+  .schema-block {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--data);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 18px;
+    margin-top: -8px; /* tighten gap to the query block above */
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+  .schema-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--text-3);
+    text-transform: uppercase;
+    margin-right: 4px;
+  }
+  .schema-label code {
+    font-size: 11px;
+    color: var(--data);
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .schema-col {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .schema-col .stype {
+    color: var(--text-3);
+    margin-left: 6px;
+  }
+
+  .phase-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-bottom: 20px;
+  }
+  .phase-pill {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    text-align: center;
+    transition: all .3s;
+    position: relative;
+  }
+  .phase-pill::after {
+    content: '';
+    position: absolute;
+    right: -6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0; height: 0;
+    border-left: 6px solid var(--border);
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+  }
+  .phase-pill:last-child::after { display: none; }
+  .phase-pill .pname {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .phase-pill .pdesc {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    margin-top: 2px;
+  }
+  .phase-pill.active {
+    background: rgba(192,132,252,.08);
+    border-color: var(--shuffle);
+    box-shadow: 0 0 16px rgba(192,132,252,.15);
+  }
+  .phase-pill.active .pname { color: var(--shuffle); font-weight: 600; }
+  .phase-pill.active .pdesc { color: var(--text-2); }
+  .phase-pill.complete {
+    border-color: rgba(74,222,128,.3);
+    background: rgba(74,222,128,.04);
+  }
+  .phase-pill.complete .pname { color: var(--result); }
+  .phase-pill.complete .pdesc { color: var(--text-2); }
+  .phase-pill.complete::after { border-left-color: rgba(74,222,128,.3); }
+
+  /* Plan view: tree on left, text on right */
+  .plan-view {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 18px;
+    min-height: 380px;
+  }
+  @media (max-width: 720px) {
+    .plan-view { grid-template-columns: 1fr; }
+  }
+  .tree-panel, .text-panel {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0; /* allow grid track to shrink so child overflow-x can engage */
+  }
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--text-3);
+    text-transform: uppercase;
+  }
+  .panel-badge {
+    font-family: var(--mono);
+    font-size: 9px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--surface-3);
+    color: var(--text-3);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .panel-badge.unresolved { background: rgba(239,68,68,.08); color: var(--danger); }
+  .panel-badge.resolved   { background: rgba(96,165,250,.08); color: var(--info); }
+  .panel-badge.optimized  { background: rgba(74,222,128,.08); color: var(--result); }
+  .panel-badge.physical   { background: rgba(226,90,28,.08); color: var(--driver); }
+
+  .tree-canvas {
+    flex: 1;
+    position: relative;
+    min-height: 340px;
+  }
+  .tree-canvas svg { width: 100%; height: 100%; }
+  .tree-node-rect {
+    fill: var(--surface-3);
+    stroke: var(--border-bright);
+    stroke-width: 1.5;
+    transition: all .4s;
+  }
+  .tree-node-rect.unresolved { stroke: var(--danger); fill: rgba(239,68,68,.04); }
+  .tree-node-rect.resolved   { stroke: var(--info); fill: rgba(96,165,250,.05); }
+  .tree-node-rect.optimized  { stroke: var(--result); fill: rgba(74,222,128,.05); }
+  .tree-node-rect.physical   { stroke: var(--driver); fill: rgba(226,90,28,.05); }
+  .tree-node-rect.changed    {
+    stroke-width: 2.5;
+    filter: drop-shadow(0 0 6px var(--shuffle-glow));
+  }
+  .tree-node-rect.removed    { opacity: .2; stroke-dasharray: 4 3; }
+
+  .tree-node-op {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    fill: var(--text);
+    text-anchor: middle;
+  }
+  .tree-node-detail {
+    font-family: var(--mono);
+    font-size: 9px;
+    fill: var(--text-2);
+    text-anchor: middle;
+  }
+  .tree-edge {
+    stroke: var(--border-bright);
+    stroke-width: 1.5;
+    fill: none;
+    marker-end: url(#tree-arrow);
+  }
+
+  .text-plan {
+    flex: 1;
+    min-width: 0; /* required for overflow-x: auto inside a flex column */
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--text-2);
+    overflow-x: auto;
+    white-space: pre;
+    padding: 6px 2px;
+  }
+  .text-plan .op    { color: var(--text); font-weight: 600; }
+  .text-plan .col   { color: var(--info); }
+  .text-plan .colu  { color: var(--danger); }   /* unresolved column */
+  .text-plan .lit   { color: var(--data); }
+  .text-plan .rel   { color: var(--shuffle); }
+  .text-plan .meta  { color: var(--text-3); font-style: italic; }
+  .text-plan .added { background: rgba(74,222,128,.1); color: var(--result); border-radius: 2px; padding: 0 2px; }
+  .text-plan .codegen { color: var(--driver); font-weight: 700; }
+
+  /* =================================================================
+     SCENARIO 2: RULE SHOWCASE
+     ================================================================= */
+  .rule-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 600px) { .rule-grid { grid-template-columns: 1fr; } }
+  .rule-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: all .2s;
+    text-align: left;
+  }
+  .rule-card:hover { background: var(--surface-3); border-color: var(--border-bright); }
+  .rule-card.active {
+    background: rgba(192,132,252,.05);
+    border-color: var(--shuffle);
+    box-shadow: 0 0 16px rgba(192,132,252,.15);
+  }
+  .rule-card-name {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .rule-card.active .rule-card-name { color: var(--shuffle); }
+  .rule-card-desc {
+    font-size: 12px;
+    color: var(--text-2);
+    line-height: 1.4;
+  }
+  .rule-stage {
+    display: grid;
+    grid-template-columns: 1fr 56px 1fr;
+    gap: 12px;
+    align-items: stretch;
+    min-height: 280px;
+  }
+  @media (max-width: 720px) {
+    .rule-stage { grid-template-columns: 1fr; grid-template-rows: auto 40px auto; }
+    .rule-arrow { transform: rotate(90deg); }
+  }
+  .rule-side {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0; /* allow grid track to shrink so child overflow-x can engage */
+  }
+  .rule-side.before { border-left: 3px solid var(--danger); }
+  .rule-side.after  { border-left: 3px solid var(--result); }
+  .rule-side-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .rule-side.before .rule-side-label { color: var(--danger); }
+  .rule-side.after .rule-side-label  { color: var(--result); }
+  .rule-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--shuffle);
+    font-family: var(--mono);
+    font-size: 24px;
+    font-weight: 700;
+  }
+  .rule-side .text-plan { font-size: 10.5px; }
+
+  /* =================================================================
+     SCENARIO 3: COST-BASED PLAN SELECTION
+     ================================================================= */
+  .join-context {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 14px;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 600px) {
+    .join-context { grid-template-columns: 1fr; }
+    .join-symbol  { transform: rotate(90deg); }
+  }
+  .table-card {
+    background: var(--surface-2);
+    border: 1.5px solid var(--executor);
+    border-radius: 10px;
+    padding: 14px;
+    text-align: center;
+  }
+  .table-card.small {
+    border-color: var(--data);
+  }
+  .table-card-name {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--executor);
+    letter-spacing: .1em;
+    margin-bottom: 4px;
+  }
+  .table-card.small .table-card-name { color: var(--data); }
+  .table-card-rows {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .table-card-size {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .join-symbol {
+    font-family: var(--mono);
+    font-size: 22px;
+    color: var(--shuffle);
+    font-weight: 700;
+  }
+
+  .candidates-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 720px) { .candidates-grid { grid-template-columns: 1fr; } }
+  .candidate {
+    background: var(--surface-2);
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    transition: all .3s;
+    position: relative;
+  }
+  .candidate.winner {
+    border-color: var(--result);
+    box-shadow: 0 0 24px rgba(74,222,128,.2);
+    background: rgba(74,222,128,.04);
+  }
+  .candidate.eliminated {
+    opacity: .55;
+  }
+  .candidate-badge {
+    position: absolute;
+    top: -10px;
+    right: 10px;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .1em;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: var(--result);
+    color: var(--bg);
+    font-weight: 700;
+    display: none;
+  }
+  .candidate.winner .candidate-badge { display: block; }
+  .candidate-name {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .candidate.winner .candidate-name { color: var(--result); }
+  .candidate-desc {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-bottom: 12px;
+    line-height: 1.4;
+    min-height: 30px;
+  }
+  .cost-breakdown {
+    display: grid;
+    gap: 6px;
+  }
+  .cost-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: center;
+    font-family: var(--mono);
+    font-size: 10px;
+  }
+  .cost-row-label { color: var(--text-3); letter-spacing: .05em; }
+  .cost-row-value { color: var(--text); font-weight: 500; }
+  .cost-bar {
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+    grid-column: 1 / -1;
+    margin-top: 2px;
+  }
+  .cost-bar-fill {
+    height: 100%;
+    background: var(--shuffle);
+    border-radius: 3px;
+    transition: width .8s cubic-bezier(.4,0,.2,1);
+  }
+  .candidate.winner .cost-bar-fill { background: var(--result); }
+  .candidate.eliminated .cost-bar-fill { background: var(--danger); }
+  .cost-total {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .cost-total-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .15em;
+    color: var(--text-3);
+    text-transform: uppercase;
+  }
+  .cost-total-value {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .candidate.winner .cost-total-value { color: var(--result); }
+
+  .threshold-info {
+    background: var(--surface-2);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-2);
+    line-height: 1.5;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .threshold-info .key { color: var(--shuffle); }
+  .threshold-info .val { color: var(--text); font-weight: 600; }
+
+  /* ---- Narration panel ---- */
+  .narration {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    min-height: 640px;
+  }
+  .narration-header { padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .narration-step {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--shuffle);
+    letter-spacing: .1em;
+    margin-bottom: 6px;
+  }
+  .narration-title {
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .narration-body {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text-2);
+    margin-bottom: 20px;
+  }
+  .narration-body p { margin-bottom: 12px; }
+  .narration-body strong { color: var(--text); font-weight: 500; }
+  .narration-body code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--data);
+  }
+  .narration-body .danger { color: var(--danger); }
+  .narration-body .safe   { color: var(--result); }
+  .narration-body .info   { color: var(--info); }
+  .narration-body .accent { color: var(--shuffle); }
+  .narration-key {
+    background: var(--surface-2);
+    border-left: 2px solid var(--shuffle);
+    padding: 12px 14px;
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+    color: var(--text-2);
+    margin-top: auto;
+  }
+  .narration-key strong {
+    color: var(--text);
+    display: block;
+    margin-bottom: 4px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+
+  /* ---- Controls ---- */
+  .controls {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 20px;
+    justify-content: space-between;
+    min-height: 70px;
+  }
+  .control-group { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .control-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .slider-wrap {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 8px;
+  }
+  .slider-wrap input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 200px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+  }
+  .slider-wrap input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--shuffle);
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 0 8px var(--shuffle-glow);
+  }
+  .slider-wrap input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--shuffle);
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+  }
+  .slider-value {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    min-width: 60px;
+    text-align: right;
+  }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .05em;
+    padding: 10px 18px;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all .15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--text-3); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary {
+    background: var(--shuffle);
+    border-color: var(--shuffle);
+    color: var(--bg);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: #a855e8;
+    border-color: #a855e8;
+  }
+  .btn-primary:disabled { opacity: .5; background: var(--surface-2); border-color: var(--border-bright); color: var(--text-3); }
+
+  /* ---- Footer ---- */
+  .footnote {
+    margin-top: 32px;
+    padding: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-2);
+    font-size: 14px;
+  }
+  .footnote strong { color: var(--text); }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .05em;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 8px; height: 8px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="eyebrow">Part 3 · Inside the Machinery</div>
+    <h1>Meet the <span class="accent">Catalyst</span> Optimizer</h1>
+    <p class="lead">
+      When you call an action, Spark doesn't run your code directly. It hands your query to <span class="term">Catalyst</span> —
+      a query optimizer that <span class="term">parses, analyzes, rewrites, and plans</span> it through four phases before a single task starts.
+      Watch the transformation happen.
+    </p>
+  </header>
+
+  <!-- Scenario tabs -->
+  <div class="tabs" role="tablist" id="tabs">
+    <button class="tab active" data-scenario="phases">
+      <span class="tab-num">01</span> The Four Phases
+    </button>
+    <button class="tab" data-scenario="rules">
+      <span class="tab-num">02</span> Optimization Rules
+    </button>
+    <button class="tab" data-scenario="cost">
+      <span class="tab-num">03</span> Cost-Based Selection
+    </button>
+  </div>
+
+  <div class="main">
+    <div class="canvas" id="canvas">
+      <div class="canvas-header">
+        <div class="canvas-title">
+          <span class="label" id="scenarioTitle">The Four Phases</span>
+          <span style="margin:0 8px;color:var(--text-3)">·</span>
+          <span id="scenarioSubtitle">Watch one query journey from code to bytecode</span>
+        </div>
+        <div class="scenario-status" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span id="statusText">idle</span>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 1: FOUR PHASES =============== -->
+      <div class="scenario active" id="scenario-phases">
+        <div class="query-block">
+<span class="comment">// Your DataFrame code</span>
+spark.<span class="method">read</span>.<span class="method">parquet</span>(<span class="str">"users.parquet"</span>)
+  .<span class="method">filter</span>($<span class="str">"age"</span> &gt; <span class="num">21</span>)
+  .<span class="method">filter</span>($<span class="str">"country"</span> === <span class="str">"US"</span>)
+  .<span class="method">select</span>(<span class="str">"name"</span>, <span class="str">"age"</span>)
+  .<span class="method">show</span>()
+        </div>
+
+        <div class="schema-block">
+          <span class="schema-label"><code>users.parquet</code> · stored schema</span>
+          <span class="schema-col">name<span class="stype">: String</span></span>
+          <span class="schema-col">age<span class="stype">: Int</span></span>
+          <span class="schema-col">country<span class="stype">: String</span></span>
+          <span class="schema-col">ssn<span class="stype">: String</span></span>
+        </div>
+
+        <div class="phase-strip" id="phaseStrip">
+          <div class="phase-pill" data-phase="0">
+            <div class="pname">Parsed</div>
+            <div class="pdesc">tree built · unresolved</div>
+          </div>
+          <div class="phase-pill" data-phase="1">
+            <div class="pname">Analyzed</div>
+            <div class="pdesc">columns resolved</div>
+          </div>
+          <div class="phase-pill" data-phase="2">
+            <div class="pname">Optimized</div>
+            <div class="pdesc">rules applied</div>
+          </div>
+          <div class="phase-pill" data-phase="3">
+            <div class="pname">Physical</div>
+            <div class="pdesc">strategy chosen</div>
+          </div>
+        </div>
+
+        <div class="plan-view">
+          <div class="tree-panel">
+            <div class="panel-header">
+              <span class="panel-title">Plan Tree</span>
+              <span class="panel-badge" id="treeBadge">—</span>
+            </div>
+            <div class="tree-canvas">
+              <svg id="treeSvg" viewBox="0 0 280 380" preserveAspectRatio="xMidYMid meet">
+                <defs>
+                  <marker id="tree-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                          markerUnits="strokeWidth" markerWidth="6" markerHeight="6"
+                          orient="auto">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border-bright)"/>
+                  </marker>
+                </defs>
+                <g id="treeGroup"></g>
+              </svg>
+            </div>
+          </div>
+
+          <div class="text-panel">
+            <div class="panel-header">
+              <span class="panel-title">.explain(mode="extended")</span>
+              <span class="panel-badge" id="textBadge">—</span>
+            </div>
+            <pre class="text-plan" id="textPlan">Click <strong>Next Phase</strong> below to begin.</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 2: RULES =============== -->
+      <div class="scenario" id="scenario-rules">
+        <div class="rule-grid" id="ruleGrid"></div>
+
+        <div class="query-block" id="ruleQuery">
+          <span class="comment">// Click a rule above to see the optimization</span>
+        </div>
+
+        <div class="rule-stage">
+          <div class="rule-side before">
+            <div class="rule-side-label">Before · Analyzed Plan</div>
+            <pre class="text-plan" id="ruleBeforeText">—</pre>
+          </div>
+          <div class="rule-arrow">→</div>
+          <div class="rule-side after">
+            <div class="rule-side-label">After · Optimized Plan</div>
+            <pre class="text-plan" id="ruleAfterText">—</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 3: COST-BASED SELECTION =============== -->
+      <div class="scenario" id="scenario-cost">
+        <div class="query-block">
+<span class="comment">// A typical join query</span>
+<span class="kw">val</span> orders    = spark.<span class="method">read</span>.<span class="method">parquet</span>(<span class="str">"orders"</span>)     <span class="comment">// fact table</span>
+<span class="kw">val</span> customers = spark.<span class="method">read</span>.<span class="method">parquet</span>(<span class="str">"customers"</span>)  <span class="comment">// dimension table</span>
+
+orders.<span class="method">join</span>(customers, <span class="str">"customer_id"</span>).<span class="method">show</span>()
+        </div>
+
+        <div class="join-context">
+          <div class="table-card">
+            <div class="table-card-name">orders (fact)</div>
+            <div class="table-card-rows">120,000,000 rows</div>
+            <div class="table-card-size">~50 GB</div>
+          </div>
+          <div class="join-symbol">⨝</div>
+          <div class="table-card small">
+            <div class="table-card-name">customers (dimension)</div>
+            <div class="table-card-rows" id="smallRows">800,000 rows</div>
+            <div class="table-card-size" id="smallSize">~8 MB</div>
+          </div>
+        </div>
+
+        <div class="candidates-grid" id="candidatesGrid"></div>
+
+        <div class="threshold-info">
+          <div>
+            <span class="key">spark.sql.autoBroadcastJoinThreshold</span> = <span class="val">10 MB</span>
+            · Catalyst picks broadcast when the small side fits comfortably.
+          </div>
+          <div id="thresholdVerdict" style="color:var(--text-3)">—</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Narration panel -->
+    <div class="narration">
+      <div class="narration-header">
+        <div class="narration-step" id="narrStep">SCENARIO · 01</div>
+        <div class="narration-title" id="narrTitle">Your code is just a tree</div>
+      </div>
+      <div class="narration-body" id="narrBody">
+        <p>Catalyst sees your DataFrame code as a <strong>tree of operators</strong>: a project on top of a filter on top of another filter on top of a relation.</p>
+        <p>Click <strong>Next Phase</strong> below to watch the tree transform through all four phases of optimization.</p>
+      </div>
+      <div class="narration-key" id="narrKey">
+        <strong>Key Concept</strong>
+        Every action triggers four phases: <span style="color:var(--danger)">Parse</span> → <span style="color:var(--info)">Analyze</span> → <span style="color:var(--result)">Optimize</span> → <span style="color:var(--driver)">Plan</span>.
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls" id="controls"></div>
+
+  <div class="footnote">
+    <div class="legend" style="margin-bottom: 12px">
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--danger)"></span>Unresolved (parsed)</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--info)"></span>Analyzed</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--result)"></span>Optimized</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--driver)"></span>Physical</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--shuffle)"></span>Changed by rule</div>
+    </div>
+    <strong>Inspect any plan yourself:</strong> Call <code style="font-family:var(--mono);color:var(--data);background:var(--surface-2);padding:2px 6px;border-radius:4px">df.explain(mode="extended")</code> on any DataFrame to print all four plans. In the Spark UI, the SQL/DataFrame tab shows the physical plan as a visual DAG, with <code style="font-family:var(--mono);color:var(--data);background:var(--surface-2);padding:2px 6px;border-radius:4px">WholeStageCodegen</code> markers showing which operators got fused into a single function. Reading these plans is the single best skill for tuning Spark.
+  </div>
+
+</div>
+
+<script>
+// =====================================================================
+// State
+// =====================================================================
+const STATE = {
+  scenario: 'phases',
+  currentPhase: -1,  // -1 = before start, 0..3 = phases
+  activeRule: null,
+  smallTableMB: 8,
+};
+
+const $ = id => document.getElementById(id);
+
+function setStatus(text, mode='idle') {
+  const s = $('statusIndicator');
+  $('statusText').textContent = text;
+  s.classList.toggle('running', mode === 'running');
+}
+
+function setNarration({step, title, body, key}) {
+  $('narrStep').textContent = step;
+  $('narrTitle').textContent = title;
+  $('narrBody').innerHTML = body;
+  if (key) {
+    $('narrKey').innerHTML = `<strong>${key.title}</strong>${key.body}`;
+    $('narrKey').style.display = '';
+  } else {
+    $('narrKey').style.display = 'none';
+  }
+}
+
+// =====================================================================
+// SCENARIO 1: FOUR PHASES
+// =====================================================================
+
+// Each phase produces a tree (list of nodes top-to-bottom) AND a text plan
+const PHASES = [
+  {
+    name: 'Parsed Logical Plan',
+    badge: 'unresolved',
+    tree: [
+      { op: "'Project",  detail: "['name, 'age]",       cls: 'unresolved', changed: true },
+      { op: "'Filter",   detail: "('country = US)",     cls: 'unresolved' },
+      { op: "'Filter",   detail: "('age > 21)",         cls: 'unresolved' },
+      { op: "'Unresolved", detail: "users.parquet",     cls: 'unresolved' },
+    ],
+    text: [
+      `<span class="op">'Project</span> [<span class="colu">'name</span>, <span class="colu">'age</span>]`,
+      `+- <span class="op">'Filter</span> (<span class="colu">'country</span> = <span class="lit">'US'</span>)`,
+      `   +- <span class="op">'Filter</span> (<span class="colu">'age</span> > <span class="lit">21</span>)`,
+      `      +- <span class="op">'UnresolvedRelation</span> <span class="rel">[users.parquet]</span>`,
+    ].join('\n'),
+    narration: {
+      step: 'SCENARIO · 01 · PHASE 1',
+      title: 'Parsed — just a tree of placeholders',
+      body: `<p>Spark parses your code into a tree of operator nodes. <strong>Notice the apostrophes</strong> on <code>'name</code>, <code>'age</code>, <code>'country</code> — these are <span class="danger">unresolved</span>.</p>
+             <p>At this stage Spark doesn't know if those columns even exist, what their types are, or where the data lives. It just has a structural recipe.</p>`,
+      key: { title: 'Lesson', body: 'Parsing is purely syntactic. No catalog lookups, no validation. The tree could reference complete nonsense and parsing would still succeed.' }
+    }
+  },
+  {
+    name: 'Analyzed Logical Plan',
+    badge: 'resolved',
+    tree: [
+      { op: 'Project',  detail: '[name#1, age#2]',      cls: 'resolved', changed: true },
+      { op: 'Filter',   detail: '(country#3 = US)',     cls: 'resolved' },
+      { op: 'Filter',   detail: '(age#2 > 21)',         cls: 'resolved' },
+      { op: 'Relation', detail: 'name,age,country,ssn', cls: 'resolved', changed: true },
+    ],
+    text: [
+      `<span class="op">Project</span> [<span class="col">name#1</span>, <span class="col">age#2</span>]`,
+      `+- <span class="op">Filter</span> (<span class="col">country#3</span> = <span class="lit">'US'</span>)`,
+      `   +- <span class="op">Filter</span> (<span class="col">age#2</span> > <span class="lit">21</span>)`,
+      `      +- <span class="op">Relation</span> <span class="rel">[name#1, age#2, country#3, ssn#4]</span> parquet`,
+    ].join('\n'),
+    narration: {
+      step: 'SCENARIO · 01 · PHASE 2',
+      title: 'Analyzed — columns hooked up',
+      body: `<p>The <strong>Analyzer</strong> walked the tree with the <strong>Catalog</strong> (the metadata service). Every reference is now resolved: <code>'name</code> → <code class="info">name#1</code> with type <code>string</code>.</p>
+             <p>The relation expanded to the file's <strong>full stored schema</strong> (see the strip under the query): all 4 columns are loaded into the plan — including <code>ssn</code>, which the query never asked for. Spark also performs type checking here.</p>`,
+      key: { title: 'Lesson', body: 'If a column name doesn\'t exist or types don\'t match, you get an AnalysisException here — long before any executor runs.' }
+    }
+  },
+  {
+    name: 'Optimized Logical Plan',
+    badge: 'optimized',
+    tree: [
+      { op: 'Project',  detail: '[name#1, age#2]',           cls: 'optimized' },
+      { op: 'Filter',   detail: 'isNotNull AND ... AND ...', cls: 'optimized', changed: true },
+      { op: 'Relation', detail: 'name,age,country',          cls: 'optimized', changed: true },
+    ],
+    text: [
+      `<span class="op">Project</span> [<span class="col">name#1</span>, <span class="col">age#2</span>]`,
+      `+- <span class="op">Filter</span> (<span class="added">isnotnull(country#3)</span> AND <span class="added">isnotnull(age#2)</span> AND (<span class="col">country#3</span> = <span class="lit">'US'</span>) AND (<span class="col">age#2</span> > <span class="lit">21</span>))`,
+      `   +- <span class="op">Relation</span> <span class="rel">[name#1, age#2, <span class="added">country#3</span>]</span> parquet  <span class="meta">// ssn pruned</span>`,
+    ].join('\n'),
+    narration: {
+      step: 'SCENARIO · 01 · PHASE 3',
+      title: 'Optimized — rules rewrite the tree',
+      body: `<p>Catalyst applies <strong>rule-based optimizations</strong>. Several fired at once here:</p>
+             <p>• <strong class="safe">Filter combining</strong> — two Filter nodes merged into one.<br>
+                • <strong class="safe">Null inference</strong> — <code>isnotnull</code> checks added automatically.<br>
+                • <strong class="safe">Column pruning</strong> — <code>ssn#4</code> dropped from the Relation. The file stores 4 columns, but only 3 are referenced downstream, so Catalyst tells the Parquet reader not to bother loading <code>ssn</code> at all.</p>
+             <p>None of this required cluster compute. It's all pure tree rewriting.</p>`,
+      key: { title: 'Lesson', body: 'Rules run to a fixed point — they keep applying until nothing changes. Spark ships with hundreds of rules in this batch.' }
+    }
+  },
+  {
+    name: 'Physical Plan',
+    badge: 'physical',
+    tree: [
+      { op: '*(1) Project', detail: '[name#1, age#2]',           cls: 'physical', changed: true },
+      { op: '*(1) Filter',  detail: '4 predicates',              cls: 'physical', changed: true },
+      { op: '*(1) ColumnarToRow', detail: '',                    cls: 'physical', changed: true },
+      { op: 'FileScan parquet', detail: '+ PushedFilters',       cls: 'physical', changed: true },
+    ],
+    text: [
+      `<span class="codegen">*(1)</span> <span class="op">Project</span> [<span class="col">name#1</span>, <span class="col">age#2</span>]`,
+      `+- <span class="codegen">*(1)</span> <span class="op">Filter</span> (isnotnull(country#3) AND isnotnull(age#2) AND (country#3 = 'US') AND (age#2 > 21))`,
+      `   +- <span class="codegen">*(1)</span> <span class="op">ColumnarToRow</span>`,
+      `      +- <span class="op">FileScan</span> parquet <span class="rel">[name#1, age#2, country#3]</span>`,
+      `         <span class="meta">Batched: true</span>`,
+      `         <span class="meta">PushedFilters: <span class="added">[IsNotNull(country), IsNotNull(age), EqualTo(country,US), GreaterThan(age,21)]</span></span>`,
+      `         <span class="meta">ReadSchema: struct&lt;name:string,age:int,country:string&gt;</span>`,
+    ].join('\n'),
+    narration: {
+      step: 'SCENARIO · 01 · PHASE 4',
+      title: 'Physical — the real strategy',
+      body: `<p>The logical plan became a <strong>physical plan</strong> with executable operators. Two huge wins here:</p>
+             <p>• <strong class="info">PushedFilters</strong> — the filters travel <em>into</em> the Parquet reader. Rows that fail the predicate are skipped at the file level. <strong>Less I/O.</strong></p>
+             <p>• <strong class="info">*(1)</strong> markers — these operators got fused by <strong>Whole-Stage CodeGen</strong> into a single compiled Java method. No interpreter overhead, no virtual function calls.</p>`,
+      key: { title: 'Why this matters', body: 'A naïve implementation would read all 4 columns × all rows, then filter in memory. The optimized plan reads 3 columns and skips most rows at the source. Same query, easily 10× faster.' }
+    }
+  },
+];
+
+function renderTree(treeNodes) {
+  const svg = $('treeSvg');
+  const group = $('treeGroup');
+  group.innerHTML = '';
+
+  if (!treeNodes || treeNodes.length === 0) return;
+
+  const cw = 280;
+  const total = treeNodes.length;
+  const nodeH = 48;
+  const padTop = 14;
+  const padBottom = 14;
+  const availH = 380 - padTop - padBottom;
+  const gap = total > 1 ? Math.max(10, (availH - total*nodeH) / (total-1)) : 0;
+  const totalH = total*nodeH + (total-1)*gap + padTop + padBottom;
+  svg.setAttribute('viewBox', `0 0 ${cw} ${Math.max(380, totalH)}`);
+
+  const positions = treeNodes.map((_, i) => padTop + i*(nodeH + gap));
+
+  // Edges
+  for (let i = 0; i < treeNodes.length - 1; i++) {
+    const y1 = positions[i] + nodeH;
+    const y2 = positions[i+1];
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', `M ${cw/2} ${y1} L ${cw/2} ${y2}`);
+    path.setAttribute('class', 'tree-edge');
+    group.appendChild(path);
+  }
+
+  // Nodes
+  treeNodes.forEach((n, i) => {
+    const y = positions[i];
+    const nodeW = 220;
+    const x = (cw - nodeW) / 2;
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', x);
+    rect.setAttribute('y', y);
+    rect.setAttribute('width', nodeW);
+    rect.setAttribute('height', nodeH);
+    rect.setAttribute('rx', 6);
+    let cls = 'tree-node-rect ' + (n.cls || '');
+    if (n.changed) cls += ' changed';
+    rect.setAttribute('class', cls);
+    group.appendChild(rect);
+
+    const opText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    opText.setAttribute('x', cw/2);
+    opText.setAttribute('y', y + 18);
+    opText.setAttribute('class', 'tree-node-op');
+    opText.textContent = n.op;
+    group.appendChild(opText);
+
+    if (n.detail) {
+      const detailText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      detailText.setAttribute('x', cw/2);
+      detailText.setAttribute('y', y + 34);
+      detailText.setAttribute('class', 'tree-node-detail');
+      // Truncate if too long
+      detailText.textContent = n.detail.length > 30 ? n.detail.substring(0, 28) + '…' : n.detail;
+      group.appendChild(detailText);
+    }
+  });
+}
+
+function goToPhase(idx) {
+  if (idx < 0 || idx >= PHASES.length) return;
+  STATE.currentPhase = idx;
+  const phase = PHASES[idx];
+
+  // Update phase pills
+  document.querySelectorAll('#phaseStrip .phase-pill').forEach((p, i) => {
+    p.classList.toggle('active', i === idx);
+    p.classList.toggle('complete', i < idx);
+  });
+
+  // Render tree and text
+  renderTree(phase.tree);
+  $('textPlan').innerHTML = phase.text;
+  $('treeBadge').textContent = phase.badge;
+  $('treeBadge').className = 'panel-badge ' + phase.badge;
+  $('textBadge').textContent = phase.name;
+  $('textBadge').className = 'panel-badge ' + phase.badge;
+
+  setNarration(phase.narration);
+  setStatus(`phase ${idx+1} of 4`, idx < 3 ? 'running' : 'idle');
+
+  // Update buttons
+  const prev = $('prevPhaseBtn');
+  const next = $('nextPhaseBtn');
+  if (prev) prev.disabled = idx === 0;
+  if (next) next.disabled = idx === PHASES.length - 1;
+}
+
+function resetPhases() {
+  STATE.currentPhase = -1;
+  document.querySelectorAll('#phaseStrip .phase-pill').forEach(p => {
+    p.classList.remove('active', 'complete');
+  });
+  $('textPlan').innerHTML = `<span style="color:var(--text-3);font-style:italic">Click <strong style="color:var(--text)">Next Phase</strong> below to begin.</span>`;
+  $('treeBadge').textContent = '—';
+  $('treeBadge').className = 'panel-badge';
+  $('textBadge').textContent = '—';
+  $('textBadge').className = 'panel-badge';
+  renderTree([]);
+  setStatus('idle', 'idle');
+  setNarration({
+    step: 'SCENARIO · 01',
+    title: 'Your code is just a tree',
+    body: `<p>Catalyst sees your DataFrame code as a <strong>tree of operators</strong>: a project on top of a filter on top of another filter on top of a relation.</p>
+           <p>Click <strong>Next Phase</strong> below to watch the tree transform through all four phases of optimization.</p>`,
+    key: { title: 'Key Concept', body: 'Every action triggers four phases: <span style="color:var(--danger)">Parse</span> → <span style="color:var(--info)">Analyze</span> → <span style="color:var(--result)">Optimize</span> → <span style="color:var(--driver)">Plan</span>.' }
+  });
+  const prev = $('prevPhaseBtn');
+  const next = $('nextPhaseBtn');
+  if (prev) prev.disabled = true;
+  if (next) next.disabled = false;
+}
+
+// =====================================================================
+// SCENARIO 2: OPTIMIZATION RULES
+// =====================================================================
+
+const RULES = {
+  predicate: {
+    name: 'Predicate Pushdown',
+    desc: 'Move filters as close to the data source as possible',
+    query: `<span class="kw">val</span> result = orders
+  .<span class="method">join</span>(customers, <span class="str">"customer_id"</span>)
+  .<span class="method">filter</span>($<span class="str">"customers.country"</span> === <span class="str">"US"</span>)`,
+    before: [
+      `<span class="op">Filter</span> (<span class="col">country#5</span> = <span class="lit">'US'</span>)            <span class="meta">// filter AFTER join</span>`,
+      `+- <span class="op">Join</span> Inner, (<span class="col">customer_id#1</span> = <span class="col">customer_id#3</span>)`,
+      `   :- <span class="op">Relation</span> <span class="rel">orders</span>        <span class="meta">// 120M rows</span>`,
+      `   +- <span class="op">Relation</span> <span class="rel">customers</span>     <span class="meta">// 800K rows</span>`,
+    ].join('\n'),
+    after: [
+      `<span class="op">Join</span> Inner, (<span class="col">customer_id#1</span> = <span class="col">customer_id#3</span>)`,
+      `:- <span class="op">Relation</span> <span class="rel">orders</span>           <span class="meta">// 120M rows · scanned in full</span>`,
+      `+- <span class="op">Filter</span> <span class="added">(country#5 = 'US')</span>     <span class="meta">// filter BEFORE join</span>`,
+      `   +- <span class="op">Relation</span> <span class="rel">customers</span>        <span class="meta">// 800K rows → ~80K after filter</span>`,
+    ].join('\n'),
+    narration: {
+      step: 'SCENARIO · 02 · RULE',
+      title: 'Predicate Pushdown',
+      body: `<p>The user wrote <code>.join(...).filter(country = US)</code> — naturally reading filter <em>after</em> join.</p>
+             <p>Catalyst flipped the order. The filter on <code>customers.country</code> now runs <strong>before</strong> the join, on the smaller side only.</p>
+             <p>Result: the join input dropped from 800K to ~80K rows. <strong>10× less work</strong> for the join itself.</p>`,
+      key: { title: 'Why this works', body: 'Filters and joins on independent columns commute. Catalyst can reorder them safely without changing the result.' }
+    }
+  },
+  projection: {
+    name: 'Projection Pruning',
+    desc: 'Read only the columns the query actually uses',
+    query: `spark.<span class="method">read</span>.<span class="method">parquet</span>(<span class="str">"users.parquet"</span>)  <span class="comment">// table has 50 columns</span>
+  .<span class="method">select</span>(<span class="str">"name"</span>, <span class="str">"email"</span>)`,
+    before: [
+      `<span class="op">Project</span> [<span class="col">name#1</span>, <span class="col">email#5</span>]`,
+      `+- <span class="op">Relation</span> <span class="rel">[name#1, age#2, address#3, phone#4, email#5, ... <span class="colu">+45 more columns</span>]</span> parquet`,
+      ``,
+      `<span class="meta">// Reads all 50 columns from disk, throws 48 away</span>`,
+    ].join('\n'),
+    after: [
+      `<span class="op">Project</span> [<span class="col">name#1</span>, <span class="col">email#5</span>]`,
+      `+- <span class="op">Relation</span> <span class="rel">[<span class="added">name#1, email#5</span>]</span> parquet`,
+      ``,
+      `<span class="meta">// ReadSchema reduced to only the 2 needed columns</span>`,
+    ].join('\n'),
+    narration: {
+      step: 'SCENARIO · 02 · RULE',
+      title: 'Projection Pruning',
+      body: `<p>Parquet is a <strong>columnar format</strong>, so reading 2 columns from a 50-column file is dramatically faster than reading all 50.</p>
+             <p>Catalyst sees the <code>.select</code> at the top and propagates that knowledge down to the scan. The Parquet reader only fetches the bytes for <code>name</code> and <code>email</code>.</p>
+             <p>For a typical wide table, this can be a <strong>20–50× I/O reduction</strong>.</p>`,
+      key: { title: 'Lesson', body: 'Columnar storage + projection pruning = one of the biggest reasons Spark is fast on Parquet/ORC.' }
+    }
+  },
+  constant: {
+    name: 'Constant Folding',
+    desc: 'Evaluate constant expressions at plan time, not at runtime',
+    query: `df.<span class="method">filter</span>($<span class="str">"price"</span> * (<span class="num">10</span> + <span class="num">5</span>) &gt; <span class="num">100</span> + <span class="num">50</span>)`,
+    before: [
+      `<span class="op">Filter</span> ((<span class="col">price#1</span> * (<span class="lit">10</span> + <span class="lit">5</span>)) > (<span class="lit">100</span> + <span class="lit">50</span>))`,
+      `+- <span class="op">Relation</span> <span class="rel">[id, price, ...]</span> parquet`,
+      ``,
+      `<span class="meta">// Computes 10+5 and 100+50 once per row × billions of rows</span>`,
+    ].join('\n'),
+    after: [
+      `<span class="op">Filter</span> ((<span class="col">price#1</span> * <span class="added">15</span>) > <span class="added">150</span>)`,
+      `+- <span class="op">Relation</span> <span class="rel">[id, price, ...]</span> parquet`,
+      ``,
+      `<span class="meta">// Constants folded at plan time. Multiplication still runs per row.</span>`,
+    ].join('\n'),
+    narration: {
+      step: 'SCENARIO · 02 · RULE',
+      title: 'Constant Folding',
+      body: `<p>Any expression made entirely of constants gets evaluated <strong>once, at plan time</strong>.</p>
+             <p>The two constant sub-trees <code>(10 + 5)</code> and <code>(100 + 50)</code> become literals <code>15</code> and <code>150</code>.</p>
+             <p>Skipping a few additions per row sounds trivial. On a billion-row scan, it removes <strong>2 billion arithmetic ops</strong>.</p>`,
+      key: { title: 'Lesson', body: 'Catalyst is paranoid about repeated work. Anything that can be computed once is computed once.' }
+    }
+  },
+  boolean: {
+    name: 'Boolean Simplification',
+    desc: 'Collapse tautologies and contradictions in WHERE clauses',
+    query: `df.<span class="method">filter</span>(($<span class="str">"age"</span> &gt; <span class="num">21</span>) <span class="kw">and</span> (<span class="kw">true</span> <span class="kw">or</span> $<span class="str">"foo"</span>.<span class="method">isNotNull</span>))`,
+    before: [
+      `<span class="op">Filter</span> ((<span class="col">age#1</span> > <span class="lit">21</span>) AND (<span class="lit">true</span> OR isnotnull(<span class="col">foo#2</span>)))`,
+      `+- <span class="op">Relation</span> <span class="rel">[name, age, foo, ...]</span> parquet`,
+      ``,
+      `<span class="meta">// (true OR anything) is always true — wasted computation</span>`,
+    ].join('\n'),
+    after: [
+      `<span class="op">Filter</span> (<span class="col">age#1</span> > <span class="lit">21</span>)                          <span class="meta">// AND true → dropped</span>`,
+      `+- <span class="op">Relation</span> <span class="rel">[name, age, foo, ...]</span> parquet`,
+      ``,
+      `<span class="meta">// Useless null check on foo eliminated — fewer reads, simpler codegen</span>`,
+    ].join('\n'),
+    narration: {
+      step: 'SCENARIO · 02 · RULE',
+      title: 'Boolean Simplification',
+      body: `<p>Catalyst applies basic logic: <code>x AND true</code> = <code>x</code>, <code>x OR false</code> = <code>x</code>, <code>true OR y</code> = <code>true</code>.</p>
+             <p>Here the right side of the AND simplified to <code>true</code>, which let Catalyst drop the entire clause. The <code>foo</code> column reference vanished, so projection pruning can now skip it too.</p>`,
+      key: { title: 'Lesson', body: 'Optimizations cascade. One rule firing often unlocks others on the next pass — that\'s why Catalyst runs rules to a fixed point.' }
+    }
+  },
+};
+
+function renderRuleGrid() {
+  const grid = $('ruleGrid');
+  grid.innerHTML = '';
+  Object.entries(RULES).forEach(([id, rule]) => {
+    const card = document.createElement('button');
+    card.className = 'rule-card';
+    if (STATE.activeRule === id) card.classList.add('active');
+    card.dataset.rule = id;
+    card.innerHTML = `
+      <div class="rule-card-name">${rule.name}</div>
+      <div class="rule-card-desc">${rule.desc}</div>
+    `;
+    card.addEventListener('click', () => selectRule(id));
+    grid.appendChild(card);
+  });
+}
+
+function selectRule(id) {
+  STATE.activeRule = id;
+  const rule = RULES[id];
+  document.querySelectorAll('#ruleGrid .rule-card').forEach(c => {
+    c.classList.toggle('active', c.dataset.rule === id);
+  });
+  $('ruleQuery').innerHTML = rule.query;
+  $('ruleBeforeText').innerHTML = rule.before;
+  $('ruleAfterText').innerHTML = rule.after;
+  setNarration(rule.narration);
+  setStatus(rule.name.toLowerCase(), 'running');
+}
+
+function resetRules() {
+  STATE.activeRule = null;
+  document.querySelectorAll('#ruleGrid .rule-card').forEach(c => c.classList.remove('active'));
+  $('ruleQuery').innerHTML = `<span class="comment">// Click a rule above to see the optimization</span>`;
+  $('ruleBeforeText').textContent = '—';
+  $('ruleAfterText').textContent = '—';
+  setStatus('idle', 'idle');
+  setNarration({
+    step: 'SCENARIO · 02',
+    title: 'Each rule earns its keep',
+    body: `<p>Catalyst's <strong>logical optimization batch</strong> contains hundreds of small rules. Each one rewrites the tree in a specific, conservative way that <em>always</em> preserves the query's meaning.</p>
+           <p>Pick a rule above to see exactly what it does — with a focused before/after diff.</p>`,
+    key: { title: 'Pattern', body: 'Rules are stateless tree transformations. They run repeatedly until the tree stops changing. Simple individually, powerful in combination.' }
+  });
+}
+
+// =====================================================================
+// SCENARIO 3: COST-BASED PLAN SELECTION
+// =====================================================================
+
+const BROADCAST_THRESHOLD_MB = 10;
+const SMALL_TABLE_BASE_ROWS = 800_000;  // at 8 MB
+const ORDERS_ROWS = 120_000_000;
+const ORDERS_MB = 50 * 1024;
+
+function calculateCosts(smallMB) {
+  // Cost units = arbitrary but proportional. Lower = better.
+  const numExecutors = 10;
+
+  // BroadcastHashJoin: ship small side to every executor; hash join locally.
+  // Only viable when the small side fits comfortably in driver/executor memory.
+  const broadcastNetwork = smallMB * numExecutors;
+  const broadcastScan    = ORDERS_MB;
+  const broadcastTotal   = broadcastScan + broadcastNetwork;
+  const broadcastViable  = smallMB <= BROADCAST_THRESHOLD_MB;
+
+  // Common shuffle cost — needed by both SMJ and SHJ.
+  const shuffleCost = (ORDERS_MB + smallMB) * 1.5;
+
+  // SortMergeJoin: scan + shuffle + sort both sides.
+  // Sort spills to disk gracefully, which is why it's Spark's default for large joins.
+  const sortCost = (ORDERS_MB + smallMB) * 0.8;
+  const smjTotal = ORDERS_MB + smallMB + shuffleCost + sortCost;
+
+  // ShuffleHashJoin: scan + shuffle + build hash table on the small side.
+  // The hash build is *memory-bound* (no spill-friendly fallback) and Spark
+  // defaults to `preferSortMergeJoin = true`, so SHJ is rarely chosen at scale.
+  // We model both factors with a steep per-MB memory-risk coefficient that
+  // makes SHJ uncompetitive once the small side grows beyond a few MB.
+  const shjMemoryRisk = smallMB * 5000;
+  const shjTotal = ORDERS_MB + smallMB + shuffleCost + shjMemoryRisk;
+
+  return [
+    {
+      id: 'broadcast',
+      name: 'BroadcastHashJoin',
+      desc: 'Ship small side to every executor; hash join locally — no shuffle.',
+      viable: broadcastViable,
+      eliminatedReason: !broadcastViable ? `small side > ${BROADCAST_THRESHOLD_MB} MB threshold` : null,
+      costs: [
+        { label: 'Broadcast network', value: Math.round(broadcastNetwork) },
+        { label: 'Scan large side',   value: Math.round(broadcastScan) },
+        { label: 'Shuffle',           value: 0 },
+        { label: 'Sort',              value: 0 },
+      ],
+      total: broadcastViable ? Math.round(broadcastTotal) : Infinity,
+    },
+    {
+      id: 'sortmerge',
+      name: 'SortMergeJoin',
+      desc: 'Shuffle and sort both sides on the join key, then merge. Spark\'s default.',
+      viable: true,
+      costs: [
+        { label: 'Scan both sides',   value: Math.round(ORDERS_MB + smallMB) },
+        { label: 'Shuffle',           value: Math.round(shuffleCost) },
+        { label: 'Sort',              value: Math.round(sortCost) },
+      ],
+      total: Math.round(smjTotal),
+    },
+    {
+      id: 'shufflehash',
+      name: 'ShuffleHashJoin',
+      desc: 'Shuffle both; build hash table on smaller side. Memory-bound; rarely chosen.',
+      viable: true,
+      costs: [
+        { label: 'Scan both sides',   value: Math.round(ORDERS_MB + smallMB) },
+        { label: 'Shuffle',           value: Math.round(shuffleCost) },
+        { label: 'Hash build (RAM)',  value: Math.round(shjMemoryRisk) },
+      ],
+      total: Math.round(shjTotal),
+    },
+  ];
+}
+
+function renderCandidates() {
+  const candidates = calculateCosts(STATE.smallTableMB);
+  // Find the winner (lowest finite total)
+  const finite = candidates.filter(c => c.total !== Infinity);
+  const minTotal = Math.min(...finite.map(c => c.total));
+  const maxTotal = Math.max(...finite.map(c => c.total));
+
+  const grid = $('candidatesGrid');
+  grid.innerHTML = '';
+
+  candidates.forEach(c => {
+    const isWinner = c.total === minTotal;
+    const card = document.createElement('div');
+    card.className = 'candidate';
+    if (!c.viable) card.classList.add('eliminated');
+    else if (isWinner) card.classList.add('winner');
+
+    const costRowsHtml = c.costs.map(cost => {
+      const pct = maxTotal > 0 ? (cost.value / maxTotal) * 100 : 0;
+      return `
+        <div class="cost-row">
+          <span class="cost-row-label">${cost.label}</span>
+          <span class="cost-row-value">${cost.value.toLocaleString()}</span>
+          <div class="cost-bar"><div class="cost-bar-fill" style="width:${pct}%"></div></div>
+        </div>
+      `;
+    }).join('');
+
+    card.innerHTML = `
+      <div class="candidate-badge">★ CHOSEN</div>
+      <div class="candidate-name">${c.name}</div>
+      <div class="candidate-desc">${c.desc}</div>
+      <div class="cost-breakdown">${costRowsHtml}</div>
+      <div class="cost-total">
+        <span class="cost-total-label">Total cost</span>
+        <span class="cost-total-value">${c.viable ? c.total.toLocaleString() : '∞'}</span>
+      </div>
+      ${c.eliminatedReason ? `<div style="margin-top:8px;font-family:var(--mono);font-size:10px;color:var(--danger)">⚠ ${c.eliminatedReason}</div>` : ''}
+    `;
+    grid.appendChild(card);
+  });
+
+  // Threshold verdict
+  const verdict = $('thresholdVerdict');
+  const winner = candidates.find(c => c.total === minTotal);
+  if (STATE.smallTableMB <= BROADCAST_THRESHOLD_MB) {
+    verdict.innerHTML = `Small side fits → <span style="color:var(--result)">Broadcast wins</span>`;
+  } else {
+    verdict.innerHTML = `Small side too big → <span style="color:var(--driver)">Sort-Merge wins</span>`;
+  }
+
+  // Narration: update based on winner
+  updateCostNarration(winner, STATE.smallTableMB);
+}
+
+function updateCostNarration(winner, smallMB) {
+  if (winner.id === 'broadcast') {
+    setNarration({
+      step: 'SCENARIO · 03 · WINNER',
+      title: 'BroadcastHashJoin wins',
+      body: `<p>Small side is just <strong>${smallMB} MB</strong> — comfortably under the ${BROADCAST_THRESHOLD_MB} MB threshold. Catalyst ships the entire customers table to every executor.</p>
+             <p>Now each executor has a local copy and can join its orders partition <strong>without any shuffle</strong>. The expensive networked sort the other plans need? Skipped entirely.</p>
+             <p>Try sliding the small table size up — watch what happens when it exceeds ${BROADCAST_THRESHOLD_MB} MB.</p>`,
+      key: { title: 'Rule of thumb', body: 'If one side of a join is small (a few MB to a few hundred MB depending on your config), broadcast joins are dramatically faster than shuffles.' }
+    });
+  } else if (winner.id === 'sortmerge') {
+    setNarration({
+      step: 'SCENARIO · 03 · WINNER',
+      title: 'SortMergeJoin wins',
+      body: `<p>Small side is now <strong>${smallMB} MB</strong> — too big to broadcast safely. Catalyst eliminates the broadcast candidate (broadcasting ${smallMB * 10} MB across 10 executors is a lot of network plus driver-memory pressure).</p>
+             <p>Between the remaining shuffle-based plans, <strong>SortMergeJoin</strong> wins because sort spills to disk gracefully, while ShuffleHashJoin would need the entire small side in executor RAM. Spark's default <code>preferSortMergeJoin</code> reflects this.</p>
+             <p>Slide the small side back below 10 MB to see broadcast take over again.</p>`,
+      key: { title: 'Lesson', body: 'There\'s no single "best" join. Catalyst picks per query, based on table sizes from the catalog or estimated at runtime.' }
+    });
+  } else if (winner.id === 'shufflehash') {
+    setNarration({
+      step: 'SCENARIO · 03 · WINNER',
+      title: 'ShuffleHashJoin wins',
+      body: `<p>An unusual choice — Spark normally prefers SortMergeJoin in this regime. At <strong>${smallMB} MB</strong>, the hash-build cost here happened to undercut sorting both sides.</p>
+             <p>In real workloads you'd typically see SortMergeJoin here unless you've explicitly disabled it. Slide the small side around to find the broadcast and sort-merge regimes.</p>`,
+      key: { title: 'Lesson', body: 'ShuffleHashJoin is rare in modern Spark. Configs like <code>spark.sql.join.preferSortMergeJoin = true</code> (the default) bias against it.' }
+    });
+  }
+}
+
+function setSmallTable(mb) {
+  STATE.smallTableMB = mb;
+  // Scale rows linearly with MB
+  const rows = Math.round(SMALL_TABLE_BASE_ROWS * (mb / 8));
+  $('smallRows').textContent = rows.toLocaleString() + ' rows';
+  $('smallSize').textContent = `~${mb} MB`;
+  $('sliderValue').textContent = `${mb} MB`;
+  renderCandidates();
+}
+
+// =====================================================================
+// Scenario switching & controls
+// =====================================================================
+
+function setNarrationForScenario(name) {
+  // Always clear stale status when switching scenarios
+  setStatus('idle', 'idle');
+  if (name === 'phases') {
+    $('scenarioTitle').textContent = 'The Four Phases';
+    $('scenarioSubtitle').textContent = 'Watch one query journey from code to bytecode';
+    resetPhases();
+  } else if (name === 'rules') {
+    $('scenarioTitle').textContent = 'Optimization Rules';
+    $('scenarioSubtitle').textContent = 'Focused before/after for each rule';
+    resetRules();
+  } else if (name === 'cost') {
+    $('scenarioTitle').textContent = 'Cost-Based Plan Selection';
+    $('scenarioSubtitle').textContent = 'How Catalyst picks among physical plans';
+    setStatus('weighing plans', 'running');
+    setSmallTable(8);
+  }
+}
+
+function switchScenario(name) {
+  STATE.scenario = name;
+  document.querySelectorAll('.scenario').forEach(s => s.classList.remove('active'));
+  $('scenario-' + name).classList.add('active');
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.scenario === name);
+  });
+  renderControls(name);
+  setNarrationForScenario(name);
+}
+
+function renderControls(name) {
+  const c = $('controls');
+  if (name === 'phases') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Step through each phase to see the tree and text plan transform.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset</button>
+        <button class="btn" id="prevPhaseBtn" disabled>← Prev</button>
+        <button class="btn btn-primary" id="nextPhaseBtn">Next Phase →</button>
+      </div>
+    `;
+    $('resetBtn').onclick = resetPhases;
+    $('prevPhaseBtn').onclick = () => {
+      if (STATE.currentPhase > 0) goToPhase(STATE.currentPhase - 1);
+    };
+    $('nextPhaseBtn').onclick = () => {
+      if (STATE.currentPhase < PHASES.length - 1) goToPhase(STATE.currentPhase + 1);
+    };
+  } else if (name === 'rules') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Click any rule card above to see its focused before/after.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Clear Selection</button>
+      </div>
+    `;
+    $('resetBtn').onclick = resetRules;
+  } else if (name === 'cost') {
+    c.innerHTML = `
+      <div class="control-group">
+        <span class="control-label">Small table size</span>
+        <div class="slider-wrap">
+          <input type="range" min="1" max="200" step="1" value="${STATE.smallTableMB}" id="sizeSlider">
+          <span class="slider-value" id="sliderValue">${STATE.smallTableMB} MB</span>
+        </div>
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset to 8 MB</button>
+      </div>
+    `;
+    $('sizeSlider').addEventListener('input', (e) => setSmallTable(parseInt(e.target.value, 10)));
+    $('resetBtn').onclick = () => {
+      $('sizeSlider').value = 8;
+      setSmallTable(8);
+    };
+  }
+}
+
+// =====================================================================
+// Init
+// =====================================================================
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => switchScenario(t.dataset.scenario));
+});
+
+renderRuleGrid();
+switchScenario('phases');
+</script>
+</body>
+</html>

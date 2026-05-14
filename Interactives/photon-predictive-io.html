@@ -1,0 +1,2173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Databricks Photon & Predictive I/O</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:           #0a0e1a;
+    --surface:      #131826;
+    --surface-2:    #1c2333;
+    --surface-3:    #252d40;
+    --border:       #2a3447;
+    --border-bright:#3a4660;
+    --text:         #e8ecef;
+    --text-2:       #8b95a6;
+    --text-3:       #5a6478;
+    --driver:       #e25a1c;
+    --executor:     #00d9b8;
+    --executor-glow:rgba(0,217,184,.3);
+    --data:         #ffc857;
+    --data-glow:    rgba(255,200,87,.3);
+    --result:       #4ade80;
+    --shuffle:      #c084fc;
+    --shuffle-glow: rgba(192,132,252,.3);
+    --info:         #60a5fa;
+    --info-glow:    rgba(96,165,250,.35);
+    --danger:       #ef4444;
+    --warning:      #fbbf24;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --sans: 'Sora', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-weight: 300;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  body {
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0,217,184,.07), transparent),
+      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(96,165,250,.04), transparent),
+      var(--bg);
+    background-attachment: fixed;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px);
+    background-size: 32px 32px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 48px 32px 80px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ---- Header ---- */
+  header { margin-bottom: 40px; border-bottom: 1px solid var(--border); padding-bottom: 32px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .25em;
+    text-transform: uppercase;
+    color: var(--executor);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .eyebrow::before { content: ''; width: 24px; height: 1px; background: var(--executor); }
+  h1 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(34px, 4.8vw, 52px);
+    line-height: 1.05;
+    letter-spacing: -.03em;
+    margin-bottom: 16px;
+  }
+  h1 .accent  { color: var(--executor); }
+  .lead {
+    color: var(--text-2);
+    font-size: 17px;
+    max-width: 760px;
+    font-weight: 300;
+  }
+  .lead .term { color: var(--text); font-weight: 400; }
+
+  /* ---- Tabs ---- */
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+  .tab {
+    flex: 1 1 auto; min-width: 0;
+    padding: 12px 18px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .04em;
+    background: transparent;
+    color: var(--text-2);
+    border: 1px solid transparent;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: all .2s;
+    text-align: left;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .tab:hover { color: var(--text); background: var(--surface-2); }
+  .tab.active { background: var(--surface-3); color: var(--text); border-color: var(--border-bright); }
+  .tab-num {
+    font-size: 10px;
+    color: var(--text-3);
+    padding: 2px 6px;
+    background: var(--bg);
+    border-radius: 4px;
+  }
+  .tab.active .tab-num { background: var(--executor); color: var(--bg); }
+
+  /* ---- Main layout ---- */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 980px) { .main { grid-template-columns: 1fr; } }
+
+  /* ---- Canvas ---- */
+  .canvas {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+    min-height: 640px;
+    position: relative;
+    overflow: hidden;
+  }
+  .canvas-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 22px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .canvas-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-2);
+    letter-spacing: .05em;
+  }
+  .canvas-title .label { color: var(--text); font-weight: 500; }
+  .scenario-status {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .status-dot {
+    width: 6px; height: 6px;
+    background: var(--text-3);
+    border-radius: 50%;
+    transition: all .3s;
+  }
+  .scenario-status.running .status-dot {
+    background: var(--executor);
+    box-shadow: 0 0 8px var(--executor-glow);
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 0%,100% {opacity:1} 50% {opacity:.4} }
+
+  .scenario { display: none; }
+  .scenario.active { display: block; }
+
+  /* =================================================================
+     SCENARIO 1: VECTORIZED EXECUTION (row-by-row vs SIMD batches)
+     ================================================================= */
+  .vec-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .vec-track {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    position: relative;
+  }
+  .vec-track.jvm    { border-left: 3px solid var(--driver); }
+  .vec-track.photon { border-left: 3px solid var(--executor); }
+  .vec-track-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 14px;
+  }
+  .vec-track-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .vec-track.jvm .vec-track-title    { color: var(--driver); }
+  .vec-track.photon .vec-track-title { color: var(--executor); }
+  .vec-track-subtitle {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+
+  /* The data tape — sequence of 32 cells representing rows */
+  .vec-tape {
+    display: grid;
+    grid-template-columns: repeat(32, 1fr);
+    gap: 2px;
+    margin-bottom: 12px;
+    height: 36px;
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 4px;
+  }
+  .vec-cell {
+    background: var(--surface-3);
+    border-radius: 2px;
+    transition: all .12s;
+    position: relative;
+  }
+  .vec-cell.processing.jvm    { background: var(--driver);   box-shadow: 0 0 4px rgba(226,90,28,.6); }
+  .vec-cell.processing.photon { background: var(--executor); box-shadow: 0 0 4px var(--executor-glow); }
+  .vec-cell.done.jvm     { background: rgba(226,90,28,.25); }
+  .vec-cell.done.photon  { background: rgba(0,217,184,.25); }
+
+  .vec-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+  }
+  .vec-stat {
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 8px 12px;
+    text-align: center;
+  }
+  .vec-stat-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 3px;
+  }
+  .vec-stat-value {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .vec-track.jvm .vec-stat-value.accent    { color: var(--driver); }
+  .vec-track.photon .vec-stat-value.accent { color: var(--executor); }
+
+  .vec-batch-indicator {
+    margin-top: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    text-align: center;
+    height: 14px;
+  }
+
+  /* =================================================================
+     SCENARIO 2: PHOTON vs JVM RACE
+     ================================================================= */
+  .race-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .race-query {
+    background: var(--surface-2);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .race-query .kw  { color: var(--shuffle); font-weight: 600; }
+  .race-query .fn  { color: var(--data); }
+  .race-query .col { color: var(--info); }
+  .race-query .lit { color: var(--result); }
+  .race-query .com { color: var(--text-3); font-style: italic; }
+
+  .race-engines {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 720px) { .race-engines { grid-template-columns: 1fr; } }
+
+  .race-engine {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .race-engine.jvm    { border-left: 3px solid var(--driver); }
+  .race-engine.photon { border-left: 3px solid var(--executor); }
+  .race-engine-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .race-engine-name {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .race-engine.jvm .race-engine-name    { color: var(--driver); }
+  .race-engine.photon .race-engine-name { color: var(--executor); }
+  .race-engine-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .race-engine-subtitle {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed var(--border);
+    line-height: 1.4;
+  }
+
+  .race-stages {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex: 1;
+  }
+  .race-stage-row {
+    display: grid;
+    grid-template-columns: 90px 1fr 50px;
+    gap: 8px;
+    align-items: center;
+  }
+  .race-stage-name {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .04em;
+  }
+  .race-stage-bar {
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .race-stage-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 3px;
+    transition: width .1s linear;
+  }
+  .race-engine.jvm .race-stage-fill    { background: var(--driver); }
+  .race-engine.photon .race-stage-fill { background: var(--executor); }
+  .race-stage-row.fallback .race-stage-fill {
+    background: repeating-linear-gradient(45deg, var(--warning), var(--warning) 4px, rgba(251,191,36,.4) 4px, rgba(251,191,36,.4) 8px);
+  }
+  .race-stage-time {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-2);
+    text-align: right;
+  }
+  .race-stage-row.fallback .race-stage-name {
+    color: var(--warning);
+  }
+  .race-stage-row.fallback .race-stage-name::after {
+    content: ' ↩';
+    color: var(--warning);
+  }
+
+  .race-engine-totals {
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .race-total-block {
+    text-align: center;
+  }
+  .race-total-block + .race-total-block {
+    border-left: 1px solid var(--border);
+  }
+  .race-total-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 2px;
+  }
+  .race-total-value {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .race-engine.jvm .race-total-value.time     { color: var(--driver); }
+  .race-engine.photon .race-total-value.time  { color: var(--executor); }
+  .race-total-value.cost { color: var(--data); }
+
+  .race-fallback-note {
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: rgba(251,191,36,.06);
+    border-left: 2px solid var(--warning);
+    border-radius: 0 6px 6px 0;
+    font-size: 11px;
+    color: var(--text-2);
+    line-height: 1.4;
+    display: none;
+  }
+  .race-fallback-note.visible { display: block; }
+  .race-fallback-note strong { color: var(--warning); font-family: var(--mono); }
+
+  /* =================================================================
+     SCENARIO 3: PREDICTIVE I/O FOR READS
+     ================================================================= */
+  .pio-stage {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 18px;
+  }
+  @media (max-width: 720px) { .pio-stage { grid-template-columns: 1fr; } }
+
+  .pio-table {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .pio-table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .pio-table-title {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .pio-table-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .04em;
+  }
+  .pio-table-sub {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .pio-table-sub code {
+    font-family: var(--mono);
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--data);
+    font-size: 11px;
+  }
+
+  /* The grid of "files" — 12x8 = 96 files representing the table */
+  .pio-files {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 3px;
+    background: var(--bg);
+    padding: 6px;
+    border-radius: 6px;
+  }
+  .pio-file {
+    aspect-ratio: 1 / 1;
+    background: var(--surface-3);
+    border-radius: 2px;
+    position: relative;
+    transition: all .25s;
+    border: 1px solid transparent;
+  }
+  .pio-file.scanning {
+    background: var(--info);
+    box-shadow: 0 0 6px var(--info-glow);
+  }
+  .pio-file.scanned {
+    background: rgba(96,165,250,.25);
+  }
+  .pio-file.predicted {
+    background: var(--executor);
+    box-shadow: 0 0 8px var(--executor-glow);
+    border-color: var(--executor);
+  }
+  .pio-file.match {
+    background: var(--data) !important;
+    box-shadow: 0 0 12px var(--data-glow);
+    animation: matchPulse 1.2s infinite;
+  }
+  @keyframes matchPulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.08); }
+  }
+  .pio-file.skipped {
+    background: var(--surface-3);
+    opacity: .35;
+  }
+  .pio-file.stats-skipped {
+    background: var(--surface-3);
+    opacity: .55;
+    border: 1px dashed var(--border-bright);
+  }
+
+  .pio-mode-toggle {
+    margin-top: 14px;
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 4px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+  }
+  .pio-mode-toggle button {
+    background: transparent;
+    border: none;
+    padding: 8px 12px;
+    color: var(--text-2);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .03em;
+    cursor: pointer;
+    border-radius: 5px;
+    transition: all .15s;
+  }
+  .pio-mode-toggle button.active {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+  .pio-mode-toggle button.active[data-mode="off"] { color: var(--info); }
+  .pio-mode-toggle button.active[data-mode="on"]  { color: var(--executor); }
+
+  /* Right panel: IO stats */
+  .pio-stats {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .pio-stat-card {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .pio-stat-card.highlight {
+    background: rgba(0,217,184,.06);
+    border-left: 2px solid var(--executor);
+  }
+  .pio-stat-card-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 6px;
+  }
+  .pio-stat-card-value {
+    font-family: var(--mono);
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.1;
+  }
+  .pio-stat-card-value.good { color: var(--executor); }
+  .pio-stat-card-value.bad  { color: var(--danger); }
+  .pio-stat-card-sub {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    margin-top: 4px;
+    letter-spacing: .03em;
+  }
+
+  .pio-ml-thinking {
+    margin-top: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--executor);
+    letter-spacing: .04em;
+    height: 14px;
+  }
+  .pio-ml-thinking.active::after {
+    content: '...';
+    animation: dotPulse 1s infinite;
+  }
+  @keyframes dotPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .3; }
+  }
+
+  /* =================================================================
+     SCENARIO 4: PREDICTIVE I/O FOR UPDATES (Deletion Vectors)
+     ================================================================= */
+  .dv-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .dv-query {
+    background: var(--surface-2);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+  }
+  .dv-query .kw  { color: var(--shuffle); font-weight: 600; }
+  .dv-query .col { color: var(--info); }
+  .dv-query .lit { color: var(--result); }
+
+  .dv-approaches {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 720px) { .dv-approaches { grid-template-columns: 1fr; } }
+
+  .dv-approach {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .dv-approach.cow { border-left: 3px solid var(--warning); }
+  .dv-approach.dv  { border-left: 3px solid var(--executor); }
+  .dv-approach-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .dv-approach-name {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .dv-approach.cow .dv-approach-name { color: var(--warning); }
+  .dv-approach.dv  .dv-approach-name { color: var(--executor); }
+  .dv-approach-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .dv-approach-sub {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed var(--border);
+    line-height: 1.4;
+  }
+
+  /* File grid for Delta table */
+  .dv-files-area {
+    flex: 1;
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+    min-height: 200px;
+  }
+  .dv-files-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 8px;
+  }
+  .dv-files {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .dv-file {
+    background: var(--surface-3);
+    border: 1px solid var(--border-bright);
+    border-radius: 4px;
+    padding: 8px 4px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-2);
+    transition: all .35s;
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .dv-file .fname {
+    color: var(--text);
+    font-weight: 500;
+    margin-bottom: 2px;
+    font-size: 9px;
+  }
+  .dv-file .fsize {
+    color: var(--text-3);
+    font-size: 9px;
+  }
+  .dv-file.target { border-color: var(--data); }
+  .dv-file.rewriting {
+    background: var(--warning);
+    color: var(--bg);
+    box-shadow: 0 0 12px rgba(251,191,36,.4);
+    animation: rewriting .8s ease;
+  }
+  .dv-file.rewriting .fname,
+  .dv-file.rewriting .fsize { color: var(--bg); }
+  @keyframes rewriting {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.06); opacity: .85; }
+    100% { transform: scale(1); }
+  }
+  .dv-file.new {
+    background: rgba(74,222,128,.15);
+    border-color: var(--result);
+  }
+  .dv-file.untouched {
+    background: rgba(0,217,184,.06);
+    border-color: var(--executor);
+  }
+  .dv-file .dv-mark {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: var(--executor);
+    color: var(--bg);
+    font-size: 8px;
+    padding: 2px 4px;
+    border-radius: 8px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    opacity: 0;
+    transform: scale(.5);
+    transition: all .35s;
+  }
+  .dv-file.has-dv .dv-mark {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  /* Bitmap visualization */
+  .dv-bitmap-area {
+    margin-top: 8px;
+    padding: 8px;
+    background: var(--surface-3);
+    border-radius: 4px;
+    display: none;
+  }
+  .dv-bitmap-area.visible { display: block; }
+  .dv-bitmap-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--executor);
+    letter-spacing: .04em;
+    margin-bottom: 6px;
+  }
+  .dv-bitmap-grid {
+    display: grid;
+    grid-template-columns: repeat(16, 1fr);
+    gap: 1px;
+    background: var(--bg);
+    padding: 3px;
+    border-radius: 3px;
+  }
+  .dv-bit {
+    aspect-ratio: 1 / 1;
+    background: var(--border-bright);
+    border-radius: 1px;
+  }
+  .dv-bit.deleted {
+    background: var(--danger);
+    box-shadow: 0 0 3px rgba(239,68,68,.6);
+  }
+
+  .dv-totals {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .dv-totals-row {
+    display: grid;
+    grid-template-columns: 100px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .dv-totals-row:last-child { margin-bottom: 0; }
+  .dv-totals-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .04em;
+  }
+  .dv-totals-bar {
+    height: 8px;
+    background: var(--surface-3);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .dv-totals-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width .6s cubic-bezier(.4,0,.2,1);
+  }
+  .dv-approach.cow .dv-totals-fill { background: var(--warning); }
+  .dv-approach.dv  .dv-totals-fill { background: var(--executor); }
+  .dv-totals-value {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    min-width: 70px;
+    text-align: right;
+  }
+
+  /* ---- Narration panel ---- */
+  .narration {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    min-height: 640px;
+  }
+  .narration-header { padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .narration-step {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--executor);
+    letter-spacing: .1em;
+    margin-bottom: 6px;
+  }
+  .narration-title {
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .narration-body {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text-2);
+    margin-bottom: 20px;
+  }
+  .narration-body p { margin-bottom: 12px; }
+  .narration-body strong { color: var(--text); font-weight: 500; }
+  .narration-body code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--data);
+  }
+  .narration-body .danger { color: var(--danger); }
+  .narration-body .safe   { color: var(--result); }
+  .narration-body .info   { color: var(--info); }
+  .narration-body .photon { color: var(--executor); }
+  .narration-key {
+    background: var(--surface-2);
+    border-left: 2px solid var(--executor);
+    padding: 12px 14px;
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+    color: var(--text-2);
+    margin-top: auto;
+  }
+  .narration-key strong {
+    color: var(--text);
+    display: block;
+    margin-bottom: 4px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+
+  /* ---- Controls ---- */
+  .controls {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    justify-content: space-between;
+    min-height: 70px;
+  }
+  .control-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .control-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .05em;
+    padding: 10px 16px;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all .15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--text-3); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary {
+    background: var(--executor);
+    border-color: var(--executor);
+    color: var(--bg);
+  }
+  .btn-primary:hover:not(:disabled) { background: #1ce1c0; border-color: #1ce1c0; }
+  .btn-primary:disabled { opacity: .5; background: var(--surface-2); border-color: var(--border-bright); color: var(--text-3); }
+
+  /* ---- Footer ---- */
+  .footnote {
+    margin-top: 32px;
+    padding: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-2);
+    font-size: 14px;
+  }
+  .footnote strong { color: var(--text); }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .05em;
+    margin-bottom: 12px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 8px; height: 8px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="eyebrow">Part 4 · Databricks Acceleration</div>
+    <h1>Beyond Catalyst: <span class="accent">Photon</span> and <span class="accent">Predictive I/O</span></h1>
+    <p class="lead">
+      Catalyst gives you a smart <span class="term">plan</span>. Databricks then adds two layers of acceleration on top:
+      <span class="term">Photon</span>, a native C++ engine that runs the plan with vectorized CPU instructions, and
+      <span class="term">Predictive I/O</span>, which uses ML to read only the bytes you need — and skip the rewrites you don't.
+    </p>
+  </header>
+
+  <div class="tabs" role="tablist" id="tabs">
+    <button class="tab active" data-scenario="vectorized">
+      <span class="tab-num">01</span> Vectorized Execution
+    </button>
+    <button class="tab" data-scenario="race">
+      <span class="tab-num">02</span> Photon vs JVM
+    </button>
+    <button class="tab" data-scenario="predictive-reads">
+      <span class="tab-num">03</span> Predictive Reads
+    </button>
+    <button class="tab" data-scenario="predictive-updates">
+      <span class="tab-num">04</span> Predictive Updates
+    </button>
+  </div>
+
+  <div class="main">
+    <div class="canvas" id="canvas">
+      <div class="canvas-header">
+        <div class="canvas-title">
+          <span class="label" id="scenarioTitle">Vectorized Execution</span>
+          <span style="margin:0 8px;color:var(--text-3)">·</span>
+          <span id="scenarioSubtitle">Row-by-row vs SIMD batches</span>
+        </div>
+        <div class="scenario-status" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span id="statusText">idle</span>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 1: VECTORIZED EXECUTION =============== -->
+      <div class="scenario active" id="scenario-vectorized">
+        <div class="vec-stage">
+          <div class="vec-track jvm">
+            <div class="vec-track-header">
+              <div class="vec-track-title">▤ JVM Spark · whole-stage codegen</div>
+              <div class="vec-track-subtitle">row-by-row</div>
+            </div>
+            <div class="vec-tape" id="vecJvmTape"></div>
+            <div class="vec-stats">
+              <div class="vec-stat">
+                <div class="vec-stat-label">Rows / cycle</div>
+                <div class="vec-stat-value accent">1</div>
+              </div>
+              <div class="vec-stat">
+                <div class="vec-stat-label">Processed</div>
+                <div class="vec-stat-value" id="vecJvmCount">0</div>
+              </div>
+              <div class="vec-stat">
+                <div class="vec-stat-label">Time</div>
+                <div class="vec-stat-value" id="vecJvmTime">0.0 ms</div>
+              </div>
+            </div>
+            <div class="vec-batch-indicator" id="vecJvmIndicator">idle</div>
+          </div>
+
+          <div class="vec-track photon">
+            <div class="vec-track-header">
+              <div class="vec-track-title">⚡ Photon · vectorized SIMD</div>
+              <div class="vec-track-subtitle">8 rows per cycle (batch)</div>
+            </div>
+            <div class="vec-tape" id="vecPhotonTape"></div>
+            <div class="vec-stats">
+              <div class="vec-stat">
+                <div class="vec-stat-label">Rows / cycle</div>
+                <div class="vec-stat-value accent">8</div>
+              </div>
+              <div class="vec-stat">
+                <div class="vec-stat-label">Processed</div>
+                <div class="vec-stat-value" id="vecPhotonCount">0</div>
+              </div>
+              <div class="vec-stat">
+                <div class="vec-stat-label">Time</div>
+                <div class="vec-stat-value" id="vecPhotonTime">0.0 ms</div>
+              </div>
+            </div>
+            <div class="vec-batch-indicator" id="vecPhotonIndicator">idle</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 2: PHOTON vs JVM =============== -->
+      <div class="scenario" id="scenario-race">
+        <div class="race-stage">
+          <div class="race-query" id="raceQuery">
+<span class="kw">SELECT</span> region, <span class="fn">SUM</span>(amount) <span class="kw">AS</span> revenue
+<span class="kw">FROM</span> sales
+<span class="kw">WHERE</span> year = <span class="lit">2025</span>
+<span class="kw">GROUP BY</span> region   <span class="com">-- ~10 billion rows</span>
+          </div>
+
+          <div class="race-engines">
+            <div class="race-engine jvm">
+              <div class="race-engine-header">
+                <div class="race-engine-name">▤ JVM Spark</div>
+                <div class="race-engine-tag">whole-stage codegen</div>
+              </div>
+              <div class="race-engine-subtitle">Catalyst plans the query, then Spark generates Java bytecode that processes one row at a time.</div>
+              <div class="race-stages" id="raceJvmStages"></div>
+              <div class="race-engine-totals">
+                <div class="race-total-block">
+                  <div class="race-total-label">Total time</div>
+                  <div class="race-total-value time" id="raceJvmTotalTime">—</div>
+                </div>
+                <div class="race-total-block">
+                  <div class="race-total-label">Compute cost</div>
+                  <div class="race-total-value cost" id="raceJvmCost">—</div>
+                </div>
+              </div>
+              <div class="race-fallback-note" id="raceJvmFallback">
+                <strong>NO FALLBACK</strong> — JVM is the baseline; nothing falls back.
+              </div>
+            </div>
+
+            <div class="race-engine photon">
+              <div class="race-engine-header">
+                <div class="race-engine-name">⚡ Photon</div>
+                <div class="race-engine-tag">native C++ · SIMD</div>
+              </div>
+              <div class="race-engine-subtitle">Same Catalyst plan. Photon executes the supported parts in native C++ with vectorized batches.</div>
+              <div class="race-stages" id="racePhotonStages"></div>
+              <div class="race-engine-totals">
+                <div class="race-total-block">
+                  <div class="race-total-label">Total time</div>
+                  <div class="race-total-value time" id="racePhotonTotalTime">—</div>
+                </div>
+                <div class="race-total-block">
+                  <div class="race-total-label">Compute cost</div>
+                  <div class="race-total-value cost" id="racePhotonCost">—</div>
+                </div>
+              </div>
+              <div class="race-fallback-note" id="racePhotonFallback">
+                <strong>FALLBACK</strong> — UDFs and some functions aren't yet supported in Photon. Those operators run on the JVM instead.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 3: PREDICTIVE READS =============== -->
+      <div class="scenario" id="scenario-predictive-reads">
+        <div class="pio-stage">
+          <div class="pio-table">
+            <div class="pio-table-header">
+              <div class="pio-table-title">events · 1 TB · 96 Parquet files</div>
+              <div class="pio-table-meta" id="pioFileCount">0 / 96 read</div>
+            </div>
+            <div class="pio-table-sub">
+              <code>SELECT * FROM events WHERE user_id = 47291</code> — a needle-in-haystack point lookup.
+            </div>
+            <div class="pio-files" id="pioFiles"></div>
+            <div class="pio-mode-toggle">
+              <button data-mode="off" id="pioModeOff" class="active">Predictive I/O OFF</button>
+              <button data-mode="on"  id="pioModeOn">Predictive I/O ON</button>
+            </div>
+          </div>
+
+          <div class="pio-stats">
+            <div class="pio-stat-card">
+              <div class="pio-stat-card-label">Files read</div>
+              <div class="pio-stat-card-value" id="pioFilesRead">—</div>
+              <div class="pio-stat-card-sub" id="pioFilesReadSub">click Run to start</div>
+            </div>
+            <div class="pio-stat-card">
+              <div class="pio-stat-card-label">Bytes scanned</div>
+              <div class="pio-stat-card-value" id="pioBytes">—</div>
+              <div class="pio-stat-card-sub" id="pioBytesSub">—</div>
+            </div>
+            <div class="pio-stat-card">
+              <div class="pio-stat-card-label">Time</div>
+              <div class="pio-stat-card-value" id="pioTime">—</div>
+              <div class="pio-stat-card-sub" id="pioTimeSub">—</div>
+            </div>
+            <div class="pio-stat-card highlight">
+              <div class="pio-stat-card-label">Speedup vs OFF</div>
+              <div class="pio-stat-card-value good" id="pioSpeedup">—</div>
+              <div class="pio-stat-card-sub" id="pioSpeedupSub">run both modes to compare</div>
+            </div>
+            <div class="pio-ml-thinking" id="pioMlThinking"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 4: PREDICTIVE UPDATES =============== -->
+      <div class="scenario" id="scenario-predictive-updates">
+        <div class="dv-stage">
+          <div class="dv-query">
+<span class="kw">DELETE FROM</span> orders <span class="kw">WHERE</span> order_id = <span class="lit">'A47291'</span>   <span style="color:var(--text-3);font-style:italic">-- 1 row out of ~64 million</span>
+          </div>
+
+          <div class="dv-approaches">
+            <div class="dv-approach cow">
+              <div class="dv-approach-header">
+                <div class="dv-approach-name">▤ Copy-on-Write</div>
+                <div class="dv-approach-tag">traditional Delta</div>
+              </div>
+              <div class="dv-approach-sub">Find the file containing the row. Rewrite the <strong>entire file</strong> without that row. Atomically swap.</div>
+              <div class="dv-files-area">
+                <div class="dv-files-label">Delta table · 4 Parquet files (256 MB each)</div>
+                <div class="dv-files" id="cowFiles"></div>
+              </div>
+              <div class="dv-totals">
+                <div class="dv-totals-row">
+                  <div class="dv-totals-label">Bytes written</div>
+                  <div class="dv-totals-bar"><div class="dv-totals-fill" id="cowBytesBar"></div></div>
+                  <div class="dv-totals-value" id="cowBytesVal">—</div>
+                </div>
+                <div class="dv-totals-row">
+                  <div class="dv-totals-label">Time</div>
+                  <div class="dv-totals-bar"><div class="dv-totals-fill" id="cowTimeBar"></div></div>
+                  <div class="dv-totals-value" id="cowTimeVal">—</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="dv-approach dv">
+              <div class="dv-approach-header">
+                <div class="dv-approach-name">⚡ Deletion Vectors</div>
+                <div class="dv-approach-tag">Delta Lake feature</div>
+              </div>
+              <div class="dv-approach-sub">Write a tiny <strong>bitmap</strong> marking the row as deleted. The data file stays untouched. <em style="color:var(--text-3)">A Delta Lake table feature; Photon's Predictive I/O decides when to use it.</em></div>
+              <div class="dv-files-area">
+                <div class="dv-files-label">Delta table · 4 Parquet files (256 MB each)</div>
+                <div class="dv-files" id="dvFiles"></div>
+                <div class="dv-bitmap-area" id="dvBitmapArea">
+                  <div class="dv-bitmap-label">⚡ deletion vector · file_002.dv · 8 bytes (bitmap of 64 rows shown)</div>
+                  <div class="dv-bitmap-grid" id="dvBitmapGrid"></div>
+                </div>
+              </div>
+              <div class="dv-totals">
+                <div class="dv-totals-row">
+                  <div class="dv-totals-label">Bytes written</div>
+                  <div class="dv-totals-bar"><div class="dv-totals-fill" id="dvBytesBar"></div></div>
+                  <div class="dv-totals-value" id="dvBytesVal">—</div>
+                </div>
+                <div class="dv-totals-row">
+                  <div class="dv-totals-label">Time</div>
+                  <div class="dv-totals-bar"><div class="dv-totals-fill" id="dvTimeBar"></div></div>
+                  <div class="dv-totals-value" id="dvTimeVal">—</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Narration panel -->
+    <div class="narration">
+      <div class="narration-header">
+        <div class="narration-step" id="narrStep">SCENARIO · 01</div>
+        <div class="narration-title" id="narrTitle">One row at a time vs eight at a time</div>
+      </div>
+      <div class="narration-body" id="narrBody">
+        <p>Spark's classic engine generates <strong>Java bytecode</strong> that processes one row per CPU cycle. Each value goes through the JVM's interpreter and type-checking machinery.</p>
+        <p>Photon throws all that out. It's <strong>native C++</strong> that uses SIMD (Single Instruction, Multiple Data) — CPU instructions that operate on <strong>8 values at once</strong>. Same chip, 8× the work per cycle.</p>
+        <p>Click <strong>Start</strong> below to watch the same dataset stream through both engines.</p>
+      </div>
+      <div class="narration-key" id="narrKey">
+        <strong>The key idea</strong>
+        Modern CPUs have always had SIMD instructions (SSE, AVX, AVX-512). JVM Spark mostly can't use them. Photon was built specifically to feed the CPU what it's actually fast at.
+      </div>
+    </div>
+  </div>
+
+  <div class="controls" id="controls"></div>
+
+  <div class="footnote">
+    <div class="legend">
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--driver)"></span>JVM Spark</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--executor)"></span>Photon</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--info)"></span>Scanning I/O</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--data)"></span>Match / target</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--warning)"></span>Rewrite (Copy-on-Write)</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--danger)"></span>Deleted row</div>
+    </div>
+    <strong>Why this matters:</strong> Photon and Predictive I/O are the two biggest reasons Databricks queries finish faster than open-source Spark on the same data. <em>Photon</em> doesn't change your code or your plan — it just runs the execution layer in C++ with vectorized CPU instructions. <em>Predictive I/O</em> doesn't add indexes or background jobs — it uses ML to read only the bytes a selective query needs, and replaces full-file rewrites with tiny bitmap deletion vectors. Both are on by default in modern Databricks SQL warehouses and Photon-enabled clusters.
+  </div>
+
+</div>
+
+<script>
+// =====================================================================
+// State
+// =====================================================================
+const STATE = {
+  scenario: 'vectorized',
+
+  // 1. Vectorized
+  vecRunning: false,
+  vecAbort: false,
+
+  // 2. Race
+  raceRunning: false,
+  raceAbort: false,
+  raceHasUDF: false,   // toggles between fully-supported and fallback cases
+
+  // 3. Predictive Reads
+  pioMode: 'off',      // 'off' or 'on'
+  pioRunning: false,
+  pioAbort: false,
+  pioLastOffTime: null,
+  pioLastOnTime: null,
+  pioMatchIdx: 73,     // which "file" contains the match (deterministic for demo)
+
+  // 4. Predictive Updates
+  dvRunning: false,
+  dvAbort: false,
+  dvTargetFile: 1,     // index of file containing the row to delete (file_002)
+  dvDeletedBit: 23,    // which bit in the bitmap represents the deleted row
+};
+
+const $ = id => document.getElementById(id);
+
+function setStatus(text, mode='idle') {
+  $('statusText').textContent = text;
+  $('statusIndicator').classList.toggle('running', mode === 'running');
+}
+
+function setNarration({step, title, body, key}) {
+  $('narrStep').textContent = step;
+  $('narrTitle').textContent = title;
+  $('narrBody').innerHTML = body;
+  if (key) {
+    $('narrKey').innerHTML = `<strong>${key.title}</strong>${key.body}`;
+    $('narrKey').style.display = '';
+  } else {
+    $('narrKey').style.display = 'none';
+  }
+}
+
+const sleep = ms => new Promise(r => {
+  const t = setTimeout(r, ms);
+  const i = setInterval(() => {
+    if (STATE.vecAbort || STATE.raceAbort || STATE.pioAbort || STATE.dvAbort) {
+      clearTimeout(t); clearInterval(i); r();
+    }
+  }, 40);
+});
+
+// =====================================================================
+// SCENARIO 1: VECTORIZED EXECUTION
+// =====================================================================
+
+const VEC_CELL_COUNT = 32;
+
+function renderVecTapes() {
+  ['vecJvmTape', 'vecPhotonTape'].forEach(id => {
+    const tape = $(id);
+    tape.innerHTML = '';
+    for (let i = 0; i < VEC_CELL_COUNT; i++) {
+      const c = document.createElement('div');
+      c.className = 'vec-cell';
+      tape.appendChild(c);
+    }
+  });
+  $('vecJvmCount').textContent    = '0';
+  $('vecPhotonCount').textContent = '0';
+  $('vecJvmTime').textContent     = '0.0 ms';
+  $('vecPhotonTime').textContent  = '0.0 ms';
+  $('vecJvmIndicator').textContent    = 'idle';
+  $('vecPhotonIndicator').textContent = 'idle';
+}
+
+async function runVectorized() {
+  if (STATE.vecRunning) return;
+  STATE.vecRunning = true;
+  STATE.vecAbort = false;
+  setStatus('running', 'running');
+
+  renderVecTapes();
+
+  // JVM: process 1 cell per "cycle" (180ms per cell). 32 cells = ~5.76s
+  // Photon: process 8 cells per cycle (180ms per batch). 4 batches = ~720ms
+  // Both run in parallel for the visual race.
+  const cycleMs = 180;
+  const jvmCells    = $('vecJvmTape').children;
+  const photonCells = $('vecPhotonTape').children;
+
+  const startTime = performance.now();
+
+  // Parallel runners using promises
+  const jvmRun = (async () => {
+    for (let i = 0; i < VEC_CELL_COUNT; i++) {
+      if (STATE.vecAbort) return;
+      jvmCells[i].classList.add('processing', 'jvm');
+      $('vecJvmIndicator').textContent = `processing row ${i+1} of ${VEC_CELL_COUNT}`;
+      await sleep(cycleMs);
+      jvmCells[i].classList.remove('processing');
+      jvmCells[i].classList.add('done', 'jvm');
+      $('vecJvmCount').textContent = (i+1).toString();
+      $('vecJvmTime').textContent = ((performance.now() - startTime) / 1000).toFixed(1) + 's';
+    }
+    $('vecJvmIndicator').textContent = '✓ done — 32 sequential operations';
+  })();
+
+  const photonRun = (async () => {
+    const batchSize = 8;
+    for (let batch = 0; batch < VEC_CELL_COUNT / batchSize; batch++) {
+      if (STATE.vecAbort) return;
+      // Light up all 8 cells in the batch simultaneously
+      for (let i = 0; i < batchSize; i++) {
+        const idx = batch * batchSize + i;
+        photonCells[idx].classList.add('processing', 'photon');
+      }
+      const from = batch * batchSize + 1;
+      const to = from + batchSize - 1;
+      $('vecPhotonIndicator').textContent = `SIMD batch ${batch+1} of 4 · rows ${from}–${to}`;
+      await sleep(cycleMs);
+      for (let i = 0; i < batchSize; i++) {
+        const idx = batch * batchSize + i;
+        photonCells[idx].classList.remove('processing');
+        photonCells[idx].classList.add('done', 'photon');
+      }
+      $('vecPhotonCount').textContent = ((batch+1) * batchSize).toString();
+      $('vecPhotonTime').textContent = ((performance.now() - startTime) / 1000).toFixed(1) + 's';
+    }
+    $('vecPhotonIndicator').textContent = '✓ done — 4 SIMD batches';
+
+    // When Photon finishes first, update narration immediately
+    if (!STATE.vecAbort) {
+      setNarration({
+        step: 'SCENARIO · 01 · PHOTON DONE',
+        title: 'Photon finished. JVM is still going.',
+        body: `<p>Photon processed all 32 rows in <strong>4 SIMD batches</strong> — the entire dataset done in roughly the time it takes JVM to scan its first 4 rows.</p>
+               <p>This is the core of Photon's speed: the same CPU, but every clock cycle does <span class="photon">8× the work</span>.</p>
+               <p>JVM is still chugging through one row at a time. Wait for it to finish or hit Reset.</p>`,
+        key: { title: 'Same CPU, different software', body: 'JVM Spark generates code that touches one value at a time. Photon generates code that uses AVX-512 instructions to touch 8 (or 16) values per instruction. The hardware was always capable — Photon finally uses it.' }
+      });
+    }
+  })();
+
+  await Promise.all([jvmRun, photonRun]);
+
+  STATE.vecRunning = false;
+  if (!STATE.vecAbort) {
+    setStatus('done', 'idle');
+    setNarration({
+      step: 'SCENARIO · 01 · COMPLETE',
+      title: 'Both engines finished — JVM took 8× longer',
+      body: `<p>Photon: <strong>4 batches</strong> to scan 32 rows.</p>
+             <p>JVM: <strong>32 cycles</strong> to scan the same 32 rows.</p>
+             <p>This is for one tiny operation. Real queries run millions of these per second. The 8× compound at scale, which is why <span class="photon">Photon-enabled clusters typically finish workloads 3-8× faster</span> than the equivalent JVM Spark.</p>`,
+      key: { title: 'Why "3-8×" and not "8×" overall?', body: 'Not every operation parallelizes perfectly with SIMD. Some operators (UDFs, certain string ops) still need to fall back to row-by-row. Photon picks the speedup where it can get it, and gracefully degrades where it can\'t.' }
+    });
+  } else {
+    setStatus('idle', 'idle');
+  }
+}
+
+function resetVectorized() {
+  STATE.vecAbort = true;
+  STATE.vecRunning = false;
+  renderVecTapes();
+  setStatus('idle', 'idle');
+  setNarrationForScenario('vectorized');
+}
+
+// =====================================================================
+// SCENARIO 2: PHOTON vs JVM RACE
+// =====================================================================
+
+const RACE_STAGES_BASE = [
+  { name: 'Scan',     jvmMs: 1800, photonMs: 280 },
+  { name: 'Filter',   jvmMs: 900,  photonMs: 110 },
+  { name: 'Project',  jvmMs: 400,  photonMs: 50  },
+  { name: 'Aggregate',jvmMs: 1400, photonMs: 220 },
+];
+
+function renderRaceStages() {
+  const stages = currentRaceStages();
+  ['raceJvmStages', 'racePhotonStages'].forEach(id => {
+    const container = $(id);
+    container.innerHTML = '';
+    stages.forEach(s => {
+      const row = document.createElement('div');
+      row.className = 'race-stage-row';
+      // Mark fallback on Photon side only
+      if (id === 'racePhotonStages' && s.fallback) row.classList.add('fallback');
+      row.innerHTML = `
+        <div class="race-stage-name">${s.name}</div>
+        <div class="race-stage-bar"><div class="race-stage-fill"></div></div>
+        <div class="race-stage-time">— ms</div>
+      `;
+      container.appendChild(row);
+    });
+  });
+  $('raceJvmTotalTime').textContent    = '—';
+  $('racePhotonTotalTime').textContent = '—';
+  $('raceJvmCost').textContent         = '—';
+  $('racePhotonCost').textContent      = '—';
+  $('raceJvmFallback').classList.remove('visible');
+  $('racePhotonFallback').classList.toggle('visible', STATE.raceHasUDF);
+}
+
+function currentRaceStages() {
+  // If UDF mode is on, add a UDF stage that Photon must fall back on
+  const stages = RACE_STAGES_BASE.map(s => ({ ...s }));
+  if (STATE.raceHasUDF) {
+    stages.splice(2, 0, {
+      name: 'UDF',
+      jvmMs: 600,
+      photonMs: 580,   // Photon barely faster on fallback (JVM does the work)
+      fallback: true,
+    });
+  }
+  return stages;
+}
+
+async function runRace() {
+  if (STATE.raceRunning) return;
+  STATE.raceRunning = true;
+  STATE.raceAbort = false;
+  setStatus('running', 'running');
+  renderRaceStages();
+  await sleep(80);
+
+  const stages = currentRaceStages();
+
+  const runEngine = async (engineId, totalElId, costElId, key) => {
+    const container = $(engineId);
+    const rows = container.children;
+    let totalMs = 0;
+    for (let i = 0; i < stages.length; i++) {
+      if (STATE.raceAbort) return;
+      const stage = stages[i];
+      const ms = stage[key];
+      const fill = rows[i].querySelector('.race-stage-fill');
+      const timeEl = rows[i].querySelector('.race-stage-time');
+      const start = performance.now();
+      while (!STATE.raceAbort) {
+        const elapsed = performance.now() - start;
+        const pct = Math.min(100, (elapsed / ms) * 100);
+        fill.style.width = pct + '%';
+        timeEl.textContent = Math.round(elapsed) + ' ms';
+        if (pct >= 100) {
+          fill.style.width = '100%';
+          timeEl.textContent = ms + ' ms';
+          totalMs += ms;
+          $(totalElId).textContent = (totalMs / 1000).toFixed(2) + ' s';
+          // Cost = time * rate. JVM cluster ~ $5/hr, Photon ~ $7/hr (Photon-enabled hourly is higher but completes faster).
+          const rate = (key === 'jvmMs') ? 5 : 7;
+          const costPerHour = rate;
+          const cost = (totalMs / 1000 / 3600) * costPerHour;
+          $(costElId).textContent = '$' + cost.toFixed(4);
+          break;
+        }
+        await sleep(40);
+      }
+    }
+    return totalMs;
+  };
+
+  // Run both engines in parallel
+  const [jvmTotal, photonTotal] = await Promise.all([
+    runEngine('raceJvmStages',    'raceJvmTotalTime',    'raceJvmCost',    'jvmMs'),
+    runEngine('racePhotonStages', 'racePhotonTotalTime', 'racePhotonCost', 'photonMs'),
+  ]);
+
+  STATE.raceRunning = false;
+  if (!STATE.raceAbort) {
+    setStatus('done', 'idle');
+    const speedup = (jvmTotal / photonTotal).toFixed(1);
+
+    if (STATE.raceHasUDF) {
+      setNarration({
+        step: 'SCENARIO · 02 · UDF FALLBACK',
+        title: `Photon fell back on the UDF — still ${speedup}× faster overall`,
+        body: `<p>The yellow striped row shows the <span style="color:var(--warning)">UDF stage</span>: Photon doesn't know how to vectorize arbitrary user code, so it hands that operator back to the JVM. The rest of the plan still runs in C++.</p>
+               <p>Result: JVM <strong>${(jvmTotal/1000).toFixed(2)}s</strong>, Photon <strong>${(photonTotal/1000).toFixed(2)}s</strong>. The fallback steals some of the win, but the wins from Scan/Filter/Aggregate still dominate.</p>`,
+        key: { title: 'Graceful degradation', body: 'Photon never breaks your query. Unsupported operators (UDFs, some date/time functions, complex regex) silently run on JVM. You get whatever speedup is available — never less than baseline.' }
+      });
+    } else {
+      setNarration({
+        step: 'SCENARIO · 02 · COMPLETE',
+        title: `Photon: ${speedup}× faster, ~${Math.round(speedup * 0.55)}× cheaper`,
+        body: `<p>Same Catalyst plan. Same data. JVM took <strong>${(jvmTotal/1000).toFixed(2)}s</strong>, Photon took <strong>${(photonTotal/1000).toFixed(2)}s</strong>.</p>
+               <p>Photon-enabled clusters cost more per hour (here: $7 vs $5), but they finish so much faster that the <strong>per-query bill drops</strong>. This is the whole pitch: pay slightly more per hour to spend much less per workload.</p>
+               <p>Try the <strong>"Add UDF"</strong> button below to see what happens when part of the plan can't run in Photon.</p>`,
+        key: { title: 'No code changes', body: 'You don\'t rewrite anything. Catalyst still does the planning. Photon just substitutes its C++ operators for supported physical operators at execution time.' }
+      });
+    }
+  } else {
+    setStatus('idle', 'idle');
+  }
+}
+
+function resetRace() {
+  STATE.raceAbort = true;
+  STATE.raceRunning = false;
+  renderRaceStages();
+  setStatus('idle', 'idle');
+}
+
+function toggleUDF() {
+  STATE.raceHasUDF = !STATE.raceHasUDF;
+  resetRace();
+  renderRaceStages();
+  const btn = $('raceUdfBtn');
+  if (btn) btn.textContent = STATE.raceHasUDF ? '✓ UDF in plan' : '+ Add UDF';
+  setNarrationForScenario('race');
+}
+
+// =====================================================================
+// SCENARIO 3: PREDICTIVE READS
+// =====================================================================
+
+const PIO_FILE_COUNT = 96;
+const PIO_BYTES_PER_FILE = 1024 / 96;  // ~10.67 GB per file, 1 TB total
+// Files that Delta's built-in min/max file statistics can prune (i.e., files
+// whose user_id range provably doesn't include 47291). For an unclustered
+// high-cardinality column most files DO overlap, so static stats only prune
+// a modest fraction. Deterministic for the demo; none of these are the match
+// (73) or the ML's false-positive candidates (55, 80).
+const PIO_STATS_SKIPPED = [3, 9, 15, 22, 28, 41, 48, 63, 71, 88, 95];
+
+function renderPioFiles() {
+  const grid = $('pioFiles');
+  grid.innerHTML = '';
+  for (let i = 0; i < PIO_FILE_COUNT; i++) {
+    const f = document.createElement('div');
+    f.className = 'pio-file';
+    if (i === STATE.pioMatchIdx) f.classList.add('match');
+    grid.appendChild(f);
+  }
+  $('pioFileCount').textContent = '0 / 96 read';
+}
+
+function resetPioStats() {
+  $('pioFilesRead').textContent    = '—';
+  $('pioFilesReadSub').textContent = 'click Run to start';
+  $('pioBytes').textContent        = '—';
+  $('pioBytesSub').textContent     = '—';
+  $('pioTime').textContent         = '—';
+  $('pioTimeSub').textContent      = '—';
+  $('pioMlThinking').textContent   = '';
+  $('pioMlThinking').classList.remove('active');
+}
+
+async function runPredictiveReads() {
+  if (STATE.pioRunning) return;
+  STATE.pioRunning = true;
+  STATE.pioAbort = false;
+  setStatus('running', 'running');
+  renderPioFiles();
+  $('pioMlThinking').textContent = '';
+  $('pioMlThinking').classList.remove('active');
+
+  const files = $('pioFiles').children;
+  const statsSkipped = PIO_STATS_SKIPPED.length;
+
+  // ============ PHASE 1: Delta's automatic min/max file statistics ============
+  // Happens in BOTH modes — file skipping is a Delta Lake feature, not a
+  // Predictive I/O feature. The engine consults stats in the transaction log
+  // and prunes files whose ranges provably can't include the predicate value.
+  $('pioMlThinking').textContent = 'Δ checking min/max file stats';
+  $('pioMlThinking').classList.add('active');
+  await sleep(80);
+  if (STATE.pioAbort) { STATE.pioRunning = false; setStatus('idle','idle'); return; }
+
+  PIO_STATS_SKIPPED.forEach(idx => {
+    if (idx !== STATE.pioMatchIdx) files[idx].classList.add('stats-skipped');
+  });
+  await sleep(180);
+  $('pioMlThinking').classList.remove('active');
+  $('pioMlThinking').textContent = `Δ ${statsSkipped} files pruned by min/max stats`;
+
+  const scanCandidates = [];
+  for (let i = 0; i < PIO_FILE_COUNT; i++) {
+    if (!PIO_STATS_SKIPPED.includes(i)) scanCandidates.push(i);
+  }
+  const statsTimeMs = 260;  // total Phase 1 time
+
+  if (STATE.pioMode === 'off') {
+    // ============ PHASE 2a (OFF): Scan all remaining candidates ============
+    // Static stats took us from 96 → 85 candidates, but every surviving file's
+    // range overlaps with user_id=47291, so the engine has to read them all.
+    const scanMs = 60;
+    let read = 0;
+    for (const idx of scanCandidates) {
+      if (STATE.pioAbort) break;
+      if (idx !== STATE.pioMatchIdx) files[idx].classList.add('scanning');
+      read++;
+      $('pioFileCount').textContent = `${read} / 96 read`;
+      $('pioFilesRead').textContent = read.toString();
+      $('pioFilesReadSub').textContent = `${statsSkipped} pruned by stats`;
+      $('pioBytes').textContent = (read * PIO_BYTES_PER_FILE).toFixed(1) + ' GB';
+      $('pioBytesSub').textContent = `of 1 TB`;
+      $('pioTime').textContent = ((read * scanMs + statsTimeMs) / 1000).toFixed(2) + 's';
+      $('pioTimeSub').textContent = 'incl. stats check';
+      await sleep(scanMs);
+      if (idx !== STATE.pioMatchIdx) {
+        files[idx].classList.remove('scanning');
+        files[idx].classList.add('scanned');
+      }
+    }
+
+    if (!STATE.pioAbort) {
+      const total = (scanCandidates.length * scanMs + statsTimeMs) / 1000;
+      const bytes = scanCandidates.length * PIO_BYTES_PER_FILE;
+      STATE.pioLastOffTime = total;
+      $('pioTime').textContent = total.toFixed(2) + 's';
+      $('pioTimeSub').textContent = `${scanCandidates.length} files scanned`;
+      updatePioSpeedup();
+      setNarration({
+        step: 'SCENARIO · 03 · OFF · COMPLETE',
+        title: `Stats pruned ${statsSkipped} files — but ${scanCandidates.length} still had to be read`,
+        body: `<p>Delta's automatic min/max statistics pruned <strong>${statsSkipped} files</strong> whose user_id ranges can't include 47291. That's "free" file skipping — it happens whether or not Predictive I/O is on.</p>
+               <p>But the other <strong>${scanCandidates.length} files</strong> have ranges that overlap with 47291 — any of them <em>could</em> contain the row. The engine has to read all of them: <strong>${bytes.toFixed(0)} GB scanned</strong> to find one row.</p>
+               <p>Now flip to <strong>Predictive I/O ON</strong> to see what ML adds on top.</p>`,
+        key: { title: 'Where static stats run out of road', body: 'Min/max pruning is <em>certain</em>: the value provably can\'t be in pruned files. But for high-cardinality columns on unclustered data, most files overlap with any given value, so stats can\'t prune them. Z-ordering tightens the ranges, but you have to maintain it.' }
+      });
+    }
+
+  } else {
+    // ============ PHASE 2b (ON): ML scoring on the candidates ============
+    await sleep(150);
+    $('pioMlThinking').classList.add('active');
+    $('pioMlThinking').textContent = `⚡ ML scoring ${scanCandidates.length} candidates`;
+    await sleep(700);
+    if (STATE.pioAbort) { STATE.pioRunning = false; setStatus('idle','idle'); return; }
+
+    // ML predicts 3 candidate files (the match + 2 false positives)
+    const predicted = [STATE.pioMatchIdx, STATE.pioMatchIdx - 18, STATE.pioMatchIdx + 7];
+    predicted.forEach(idx => {
+      if (idx >= 0 && idx < PIO_FILE_COUNT && idx !== STATE.pioMatchIdx) {
+        files[idx].classList.add('predicted');
+      }
+    });
+    // Mark everything ELSE that survived stats-pruning as ML-skipped
+    for (let i = 0; i < PIO_FILE_COUNT; i++) {
+      if (!predicted.includes(i)
+          && i !== STATE.pioMatchIdx
+          && !PIO_STATS_SKIPPED.includes(i)) {
+        files[i].classList.add('skipped');
+      }
+    }
+    const mlSkipped = PIO_FILE_COUNT - statsSkipped - predicted.length;
+    $('pioMlThinking').classList.remove('active');
+    $('pioMlThinking').textContent = `⚡ ML pruned ${mlSkipped} more · 3 candidates remain`;
+
+    await sleep(400);
+
+    // ============ PHASE 3 (ON): Read only the 3 ML-predicted files ============
+    const scanMs = 80;
+    let read = 0;
+    for (const idx of predicted) {
+      if (STATE.pioAbort) break;
+      if (idx !== STATE.pioMatchIdx) {
+        files[idx].classList.remove('predicted');
+        files[idx].classList.add('scanning');
+      }
+      read++;
+      $('pioFileCount').textContent = `${read} / 96 read`;
+      $('pioFilesRead').textContent = read.toString();
+      $('pioFilesReadSub').textContent = `${statsSkipped} by stats + ${mlSkipped} by ML`;
+      $('pioBytes').textContent = (read * PIO_BYTES_PER_FILE).toFixed(1) + ' GB';
+      $('pioBytesSub').textContent = `of 1 TB`;
+      $('pioTime').textContent = ((read * scanMs + statsTimeMs + 850) / 1000).toFixed(2) + 's';
+      $('pioTimeSub').textContent = 'incl. stats + ML';
+      await sleep(scanMs);
+      if (idx !== STATE.pioMatchIdx) {
+        files[idx].classList.remove('scanning');
+        files[idx].classList.add('scanned');
+      }
+    }
+
+    if (!STATE.pioAbort) {
+      const total = (predicted.length * scanMs + statsTimeMs + 850) / 1000;
+      STATE.pioLastOnTime = total;
+      $('pioTime').textContent = total.toFixed(2) + 's';
+      $('pioTimeSub').textContent = `${predicted.length} files actually read`;
+      updatePioSpeedup();
+      setNarration({
+        step: 'SCENARIO · 03 · ON · COMPLETE',
+        title: `${statsSkipped} files pruned by stats, ${mlSkipped} more by ML`,
+        body: `<p>Same <strong>${statsSkipped} files</strong> pruned by min/max stats as before. Then the Predictive I/O model scored the remaining ${scanCandidates.length} files and predicted just <strong>3 are likely</strong> to contain <code>user_id = 47291</code>.</p>
+               <p>Result: <strong>${predicted.length} / 96 files read</strong>, ~${(predicted.length * PIO_BYTES_PER_FILE).toFixed(0)} GB scanned. <span class="photon">~${Math.round(scanCandidates.length / predicted.length)}× less I/O than file skipping alone.</span></p>
+               <p>Two of the three predictions were false positives. That's expected — ML is probabilistic. But pruning ${mlSkipped} files whose ranges did include 47291 is something stats alone could never do.</p>`,
+        key: { title: 'Probabilistic vs provable', body: 'Stats pruning is <em>provable</em>: the value can\'t be there, so we skip with certainty. ML pruning is <em>probabilistic</em>: the value <em>could</em> be there, but the model bets it isn\'t based on observed patterns. False positives are the cost; massively narrowing the candidate set is the win.' }
+      });
+    }
+  }
+
+  STATE.pioRunning = false;
+  if (!STATE.pioAbort) setStatus('done', 'idle');
+  else setStatus('idle', 'idle');
+}
+
+function updatePioSpeedup() {
+  if (STATE.pioLastOffTime && STATE.pioLastOnTime) {
+    const speedup = (STATE.pioLastOffTime / STATE.pioLastOnTime).toFixed(1);
+    $('pioSpeedup').textContent = speedup + '×';
+    $('pioSpeedupSub').textContent = `OFF: ${STATE.pioLastOffTime.toFixed(2)}s · ON: ${STATE.pioLastOnTime.toFixed(2)}s`;
+  } else if (STATE.pioLastOffTime) {
+    $('pioSpeedup').textContent = '—';
+    $('pioSpeedupSub').textContent = `OFF: ${STATE.pioLastOffTime.toFixed(2)}s — run ON to compare`;
+  } else if (STATE.pioLastOnTime) {
+    $('pioSpeedup').textContent = '—';
+    $('pioSpeedupSub').textContent = `ON: ${STATE.pioLastOnTime.toFixed(2)}s — run OFF to compare`;
+  }
+}
+
+function setPioMode(mode) {
+  STATE.pioMode = mode;
+  $('pioModeOff').classList.toggle('active', mode === 'off');
+  $('pioModeOn').classList.toggle('active', mode === 'on');
+  renderPioFiles();
+  resetPioStats();
+  updatePioSpeedup();
+  setStatus('idle', 'idle');
+  setNarrationForScenario('predictive-reads');
+}
+
+function resetPio() {
+  STATE.pioAbort = true;
+  STATE.pioRunning = false;
+  STATE.pioLastOffTime = null;
+  STATE.pioLastOnTime  = null;
+  renderPioFiles();
+  resetPioStats();
+  $('pioSpeedup').textContent = '—';
+  $('pioSpeedupSub').textContent = 'run both modes to compare';
+  setStatus('idle', 'idle');
+  setNarrationForScenario('predictive-reads');
+}
+
+// =====================================================================
+// SCENARIO 4: PREDICTIVE UPDATES (Deletion Vectors)
+// =====================================================================
+
+const DV_FILE_COUNT = 4;
+const DV_FILE_SIZE_MB = 256;
+const DV_BITMAP_BITS = 64;
+
+function renderDvFiles(side) {
+  const containerId = side === 'cow' ? 'cowFiles' : 'dvFiles';
+  const grid = $(containerId);
+  grid.innerHTML = '';
+  for (let i = 0; i < DV_FILE_COUNT; i++) {
+    const f = document.createElement('div');
+    f.className = 'dv-file';
+    if (i === STATE.dvTargetFile) f.classList.add('target');
+    f.innerHTML = `
+      <div class="fname">file_00${i+1}</div>
+      <div class="fsize">${DV_FILE_SIZE_MB} MB</div>
+      <div class="dv-mark">DV</div>
+    `;
+    grid.appendChild(f);
+  }
+}
+
+function renderDvBitmap() {
+  const grid = $('dvBitmapGrid');
+  grid.innerHTML = '';
+  for (let i = 0; i < DV_BITMAP_BITS; i++) {
+    const b = document.createElement('div');
+    b.className = 'dv-bit';
+    grid.appendChild(b);
+  }
+  $('dvBitmapArea').classList.remove('visible');
+}
+
+function resetDvTotals() {
+  $('cowBytesBar').style.width = '0%';
+  $('cowTimeBar').style.width  = '0%';
+  $('dvBytesBar').style.width  = '0%';
+  $('dvTimeBar').style.width   = '0%';
+  $('cowBytesVal').textContent = '—';
+  $('cowTimeVal').textContent  = '—';
+  $('dvBytesVal').textContent  = '—';
+  $('dvTimeVal').textContent   = '—';
+}
+
+async function runDvDelete() {
+  if (STATE.dvRunning) return;
+  STATE.dvRunning = true;
+  STATE.dvAbort = false;
+  setStatus('running', 'running');
+
+  renderDvFiles('cow');
+  renderDvFiles('dv');
+  renderDvBitmap();
+  resetDvTotals();
+
+  // --- Copy-on-Write: rewrite the target file (entire 256 MB) ---
+  // --- Deletion Vectors: write 8 bytes of bitmap, don't touch the file ---
+
+  // Both happen in parallel for visual race
+  const cowRun = (async () => {
+    const cowFiles = $('cowFiles').children;
+    const target = cowFiles[STATE.dvTargetFile];
+
+    // Phase 1: "finding" file (200ms)
+    await sleep(200);
+    if (STATE.dvAbort) return;
+
+    // Phase 2: rewriting (1400ms)
+    target.classList.add('rewriting');
+    const start = performance.now();
+    const duration = 1400;
+    while (!STATE.dvAbort) {
+      const elapsed = performance.now() - start;
+      const pct = Math.min(100, (elapsed / duration) * 100);
+      $('cowBytesBar').style.width = pct + '%';
+      $('cowTimeBar').style.width  = ((elapsed / 1800) * 100) + '%';
+      $('cowBytesVal').textContent = ((pct / 100) * DV_FILE_SIZE_MB).toFixed(0) + ' MB';
+      $('cowTimeVal').textContent  = (elapsed / 1000).toFixed(2) + 's';
+      if (pct >= 100) break;
+      await sleep(40);
+    }
+    if (STATE.dvAbort) return;
+
+    target.classList.remove('rewriting');
+    target.classList.add('new');
+    target.querySelector('.fname').textContent = `file_00${STATE.dvTargetFile+1} (v2)`;
+    $('cowBytesVal').textContent = '256 MB';
+    $('cowTimeVal').textContent  = '1.60 s';
+    $('cowBytesBar').style.width = '100%';
+    $('cowTimeBar').style.width  = '89%';
+  })();
+
+  const dvRun = (async () => {
+    const dvFiles = $('dvFiles').children;
+
+    // Phase 1: AI model decides (300ms)
+    await sleep(300);
+    if (STATE.dvAbort) return;
+
+    // Phase 2: write the bitmap (very fast — 200ms)
+    $('dvBitmapArea').classList.add('visible');
+    await sleep(60);
+    if (STATE.dvAbort) return;
+
+    // Mark the deleted bit
+    const bits = $('dvBitmapGrid').children;
+    bits[STATE.dvDeletedBit].classList.add('deleted');
+
+    const start = performance.now();
+    const duration = 140;
+    while (!STATE.dvAbort) {
+      const elapsed = performance.now() - start;
+      const pct = Math.min(100, (elapsed / duration) * 100);
+      $('dvBytesBar').style.width = (pct / 100 * (8 / 256e6 * 100 * 1000)) + '%';  // tiny bar
+      $('dvTimeBar').style.width  = ((elapsed / 1800) * 100) + '%';
+      $('dvBytesVal').textContent = pct < 100 ? '...' : '8 B';
+      $('dvTimeVal').textContent  = ((300 + elapsed) / 1000).toFixed(2) + 's';
+      if (pct >= 100) break;
+      await sleep(20);
+    }
+    if (STATE.dvAbort) return;
+
+    dvFiles[STATE.dvTargetFile].classList.add('has-dv', 'untouched');
+    $('dvBytesVal').textContent = '8 B';
+    $('dvTimeVal').textContent  = '0.44 s';
+    $('dvBytesBar').style.width = '0.5%';
+    $('dvTimeBar').style.width  = '24%';
+  })();
+
+  await Promise.all([cowRun, dvRun]);
+
+  STATE.dvRunning = false;
+  if (!STATE.dvAbort) {
+    setStatus('done', 'idle');
+    setNarration({
+      step: 'SCENARIO · 04 · COMPLETE',
+      title: 'Same DELETE — 256 MB written vs 8 bytes',
+      body: `<p><strong>Copy-on-Write:</strong> rewrote the entire 256 MB Parquet file just to remove one row. Took ~1.6 seconds and 256 MB of new storage.</p>
+             <p><strong>Deletion Vectors:</strong> wrote an <strong>8-byte bitmap</strong> next to the file, with bit 23 flipped on to mark the deleted row. Took ~0.4 seconds and 8 bytes.</p>
+             <p>That's <span class="photon">~32 million times less data written</span>, and ~4× faster on this one-row delete. For multi-row deletes the savings compound: Databricks has measured deletion vectors preventing rewrites of <strong>15 trillion rows</strong> across customer workloads.</p>
+             <p>The DV <em>mechanism</em> is a Delta Lake table feature — flip <code>delta.enableDeletionVectors=true</code> and it works on OSS Spark too. Photon adds the <em>AI</em> on top: deciding when DVs pay off vs when to rewrite, and making reads-through-DVs nearly free with vectorized bitmap ops.</p>`,
+      key: { title: 'The catch', body: 'Reads on the table now have to apply the deletion vector to filter out marked rows. Photon makes this nearly free with vectorized bitmap ops. Eventually, <code>OPTIMIZE</code>, auto-compaction, or <code>REORG TABLE ... APPLY (PURGE)</code> rewrites the files and clears the bitmaps.' }
+    });
+  } else {
+    setStatus('idle', 'idle');
+  }
+}
+
+function resetDv() {
+  STATE.dvAbort = true;
+  STATE.dvRunning = false;
+  renderDvFiles('cow');
+  renderDvFiles('dv');
+  renderDvBitmap();
+  resetDvTotals();
+  setStatus('idle', 'idle');
+  setNarrationForScenario('predictive-updates');
+}
+
+// =====================================================================
+// Scenario switching & controls
+// =====================================================================
+
+function setNarrationForScenario(name) {
+  setStatus('idle', 'idle');
+  if (name === 'vectorized') {
+    $('scenarioTitle').textContent = 'Vectorized Execution';
+    $('scenarioSubtitle').textContent = 'Row-by-row vs SIMD batches';
+    setNarration({
+      step: 'SCENARIO · 01',
+      title: 'One row at a time vs eight at a time',
+      body: `<p>Spark's classic engine generates <strong>Java bytecode</strong> that processes one row per CPU cycle. Each value goes through the JVM's interpreter and type-checking machinery.</p>
+             <p>Photon throws all that out. It's <strong>native C++</strong> that uses SIMD (Single Instruction, Multiple Data) — CPU instructions that operate on <strong>8 values at once</strong>. Same chip, 8× the work per cycle.</p>
+             <p>Click <strong>Start</strong> below to watch the same dataset stream through both engines.</p>`,
+      key: { title: 'The key idea', body: 'Modern CPUs have always had SIMD instructions (SSE, AVX, AVX-512). JVM Spark mostly can\'t use them. Photon was built specifically to feed the CPU what it\'s actually fast at.' }
+    });
+  } else if (name === 'race') {
+    $('scenarioTitle').textContent = 'Photon vs JVM';
+    $('scenarioSubtitle').textContent = 'Same plan, two execution engines';
+    setNarration({
+      step: 'SCENARIO · 02',
+      title: STATE.raceHasUDF ? 'A query with a UDF — Photon will partially fall back' : 'Same plan, two engines',
+      body: STATE.raceHasUDF
+        ? `<p>You've added a <span style="color:var(--warning)">UDF</span> (user-defined function) to the query. Photon doesn't know how to vectorize arbitrary Python/Scala code, so it has to <strong>fall back to JVM</strong> for that one operator.</p>
+           <p>Watch what happens: every stage except the UDF runs in C++. The UDF row (yellow stripes) takes about the same time as JVM. Photon still wins overall — just by less.</p>
+           <p>Click <strong>Run</strong> to race them.</p>`
+        : `<p>Same query. Same Catalyst plan. The only difference is the execution engine.</p>
+           <p>The JVM side generates Java bytecode and runs each operator row by row. The Photon side runs the same operators in C++ with vectorized batches.</p>
+           <p>Click <strong>Run</strong> to race them. Then try <strong>Add UDF</strong> to see what happens when part of the plan can't run in Photon.</p>`,
+      key: { title: 'No code changes', body: 'You don\'t rewrite anything. Catalyst still does the planning. Photon just substitutes its C++ operators for supported physical operators at execution time.' }
+    });
+  } else if (name === 'predictive-reads') {
+    $('scenarioTitle').textContent = 'Predictive Reads';
+    $('scenarioSubtitle').textContent = 'Stats-based + ML-based file pruning';
+    setNarration({
+      step: 'SCENARIO · 03',
+      title: 'Finding a needle in a 1 TB haystack',
+      body: `<p>You're searching for one specific row out of billions: <code>user_id = 47291</code>.</p>
+             <p>Delta Lake has automatic <strong>min/max file statistics</strong> in the transaction log — that lets the engine skip files whose ranges <em>provably</em> can't include 47291. But for high-cardinality columns on unclustered data, most files' ranges overlap with the target value, so stats alone don't narrow things down much.</p>
+             <p><span class="photon">Predictive I/O</span> adds an ML layer that learns from past queries: it can also skip files whose stats <em>don't</em> rule them out, but which historically rarely contain matches. Probabilistic pruning on top of provable pruning.</p>
+             <p>Run with <strong>Predictive I/O OFF</strong> to see Delta's file skipping alone, then flip to <strong>ON</strong> to see ML extend it.</p>`,
+      key: { title: 'Two kinds of pruning', body: 'Stats-based pruning is <em>certain</em> — the value provably can\'t be in that file. ML-based pruning is <em>probabilistic</em> — the value <em>could</em> be there, but the model bets it isn\'t. Predictive I/O combines both.' }
+    });
+  } else if (name === 'predictive-updates') {
+    $('scenarioTitle').textContent = 'Predictive Updates';
+    $('scenarioSubtitle').textContent = 'Deletion vectors vs Copy-on-Write';
+    setNarration({
+      step: 'SCENARIO · 04',
+      title: 'Deleting one row from a 1 GB table',
+      body: `<p>You ran <code>DELETE FROM orders WHERE order_id = 'A47291'</code> — one row out of 64 million.</p>
+             <p><strong>Copy-on-Write</strong> (the classical Delta approach) finds the file holding that row and rewrites the <em>entire file</em> without it. That's <strong>256 MB written</strong> to delete a few hundred bytes.</p>
+             <p><strong>Deletion vectors</strong> are a <span class="photon">Delta Lake table feature</span> (open-source, available in Delta 2.4+) that takes a different path: write an <strong>8-byte bitmap</strong> marking the row as deleted. Data file untouched.</p>
+             <p>Photon's <span class="photon">Predictive I/O for Updates</span> is the AI layer on top that decides <em>when</em> to use DVs vs when to fall back to a rewrite. Without Predictive I/O — on OSS Spark + Delta, or on Databricks without Photon — you still get deletion vectors, you just don't get the AI deciding.</p>
+             <p>Click <strong>Run DELETE</strong> to see both approaches in parallel.</p>`,
+      key: { title: 'Two layers, separable', body: 'Deletion vectors are the <em>mechanism</em>. Predictive I/O is the <em>policy</em>. You can have the mechanism without the policy — Photon\'s contribution is the smart decision about when DVs pay off (and the vectorized bitmap ops that make reads through DVs nearly free).' }
+    });
+  }
+}
+
+function switchScenario(name) {
+  STATE.scenario = name;
+  STATE.vecAbort = true;
+  STATE.raceAbort = true;
+  STATE.pioAbort = true;
+  STATE.dvAbort = true;
+  STATE.vecRunning = false;
+  STATE.raceRunning = false;
+  STATE.pioRunning = false;
+  STATE.dvRunning = false;
+  setTimeout(() => {
+    STATE.vecAbort = STATE.raceAbort = STATE.pioAbort = STATE.dvAbort = false;
+  }, 120);
+
+  document.querySelectorAll('.scenario').forEach(s => s.classList.remove('active'));
+  $('scenario-' + name).classList.add('active');
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.scenario === name);
+  });
+  renderControls(name);
+  setNarrationForScenario(name);
+
+  if (name === 'vectorized')  renderVecTapes();
+  else if (name === 'race')   renderRaceStages();
+  else if (name === 'predictive-reads')   { renderPioFiles(); resetPioStats(); $('pioSpeedup').textContent = '—'; $('pioSpeedupSub').textContent = 'run both modes to compare'; }
+  else if (name === 'predictive-updates') { renderDvFiles('cow'); renderDvFiles('dv'); renderDvBitmap(); resetDvTotals(); }
+}
+
+function renderControls(name) {
+  const c = $('controls');
+  if (name === 'vectorized') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Watch the same 32-row dataset stream through JVM and Photon side-by-side.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset</button>
+        <button class="btn btn-primary" id="startBtn">▶ Start</button>
+      </div>
+    `;
+    $('resetBtn').onclick = resetVectorized;
+    $('startBtn').onclick = runVectorized;
+  } else if (name === 'race') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Same Catalyst plan executed by two engines. Toggle UDF to see fallback.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="raceUdfBtn">${STATE.raceHasUDF ? '✓ UDF in plan' : '+ Add UDF'}</button>
+        <button class="btn" id="resetBtn">↺ Reset</button>
+        <button class="btn btn-primary" id="runBtn">▶ Run</button>
+      </div>
+    `;
+    $('raceUdfBtn').onclick = toggleUDF;
+    $('resetBtn').onclick = resetRace;
+    $('runBtn').onclick   = runRace;
+  } else if (name === 'predictive-reads') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Flip the toggle on the canvas to switch modes, then run the query.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset</button>
+        <button class="btn btn-primary" id="runBtn">▶ Run query</button>
+      </div>
+    `;
+    $('resetBtn').onclick = resetPio;
+    $('runBtn').onclick   = runPredictiveReads;
+    $('pioModeOff').onclick = () => setPioMode('off');
+    $('pioModeOn').onclick  = () => setPioMode('on');
+  } else if (name === 'predictive-updates') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Both approaches handle the same one-row DELETE. Race them.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset</button>
+        <button class="btn btn-primary" id="runBtn">▶ Run DELETE</button>
+      </div>
+    `;
+    $('resetBtn').onclick = resetDv;
+    $('runBtn').onclick   = runDvDelete;
+  }
+}
+
+// =====================================================================
+// Init
+// =====================================================================
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => switchScenario(t.dataset.scenario));
+});
+
+switchScenario('vectorized');
+</script>
+</body>
+</html>

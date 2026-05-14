@@ -1,0 +1,1854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inside Apache Spark — An Interactive Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:           #0a0e1a;
+    --surface:      #131826;
+    --surface-2:    #1c2333;
+    --surface-3:    #252d40;
+    --border:       #2a3447;
+    --border-bright:#3a4660;
+    --text:         #e8ecef;
+    --text-2:       #8b95a6;
+    --text-3:       #5a6478;
+    --driver:       #e25a1c;
+    --driver-glow:  rgba(226,90,28,.35);
+    --executor:     #00d9b8;
+    --executor-glow:rgba(0,217,184,.3);
+    --data:         #ffc857;
+    --data-glow:    rgba(255,200,87,.3);
+    --result:       #4ade80;
+    --shuffle:      #c084fc;
+    --shuffle-glow: rgba(192,132,252,.35);
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --sans: 'Sora', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-weight: 300;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  body {
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(226,90,28,.08), transparent),
+      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(0,217,184,.05), transparent),
+      var(--bg);
+    background-attachment: fixed;
+  }
+
+  /* Subtle grid backdrop */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px);
+    background-size: 32px 32px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 48px 32px 80px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ---- Header ---- */
+  header {
+    margin-bottom: 40px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 32px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .25em;
+    text-transform: uppercase;
+    color: var(--driver);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .eyebrow::before {
+    content: '';
+    width: 24px;
+    height: 1px;
+    background: var(--driver);
+  }
+  h1 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(36px, 5vw, 56px);
+    line-height: 1.05;
+    letter-spacing: -.03em;
+    margin-bottom: 16px;
+  }
+  h1 .accent { color: var(--driver); }
+  .lead {
+    color: var(--text-2);
+    font-size: 17px;
+    max-width: 680px;
+    font-weight: 300;
+  }
+
+  /* ---- Tabs ---- */
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+  .tab {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 12px 18px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .04em;
+    background: transparent;
+    color: var(--text-2);
+    border: 1px solid transparent;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: all .2s;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .tab:hover { color: var(--text); background: var(--surface-2); }
+  .tab.active {
+    background: var(--surface-3);
+    color: var(--text);
+    border-color: var(--border-bright);
+  }
+  .tab-num {
+    font-size: 10px;
+    color: var(--text-3);
+    padding: 2px 6px;
+    background: var(--bg);
+    border-radius: 4px;
+  }
+  .tab.active .tab-num {
+    background: var(--driver);
+    color: white;
+  }
+
+  /* ---- Main layout ---- */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 980px) {
+    .main { grid-template-columns: 1fr; }
+  }
+
+  /* ---- Canvas ---- */
+  .canvas {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px 24px;
+    min-height: 540px;
+    position: relative;
+    overflow: hidden;
+  }
+  .canvas-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .canvas-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-2);
+    letter-spacing: .05em;
+  }
+  .canvas-title .label {
+    color: var(--text);
+    font-weight: 500;
+  }
+  .scenario-status {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .status-dot {
+    width: 6px; height: 6px;
+    background: var(--text-3);
+    border-radius: 50%;
+    transition: all .3s;
+  }
+  .scenario-status.running .status-dot {
+    background: var(--driver);
+    box-shadow: 0 0 8px var(--driver-glow);
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .4; }
+  }
+
+  /* ---- Stage layout (where nodes live) ---- */
+  .stage {
+    position: relative;
+    display: grid;
+    grid-template-rows: auto auto auto auto;
+    gap: 32px;
+    align-items: center;
+    min-height: 440px;
+  }
+
+  /* SVG connection layer */
+  .connections {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .conn-line {
+    stroke: var(--border-bright);
+    stroke-width: 1.5;
+    fill: none;
+    opacity: .5;
+  }
+  .conn-line.active {
+    stroke: var(--driver);
+    opacity: 1;
+    stroke-dasharray: 4 6;
+    animation: flow 1s linear infinite;
+  }
+  .conn-line.shuffle {
+    stroke: var(--shuffle);
+  }
+  @keyframes flow {
+    to { stroke-dashoffset: -20; }
+  }
+
+  /* Source row */
+  .source-row {
+    display: flex;
+    justify-content: center;
+    z-index: 2;
+    position: relative;
+  }
+  .data-source {
+    background: var(--surface-2);
+    border: 1px dashed var(--border-bright);
+    border-radius: 12px;
+    padding: 14px 20px;
+    min-width: 320px;
+    text-align: center;
+  }
+  .source-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--text-3);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .data-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    justify-content: center;
+  }
+  .data-item {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--surface-3);
+    color: var(--data);
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    transition: all .4s;
+    min-width: 32px;
+    text-align: center;
+  }
+  .data-item.dispatched {
+    opacity: 0;
+    transform: scale(.5);
+  }
+
+  /* Driver row */
+  .driver-row {
+    display: flex;
+    justify-content: center;
+    z-index: 2;
+    position: relative;
+  }
+  .driver-node {
+    background: var(--surface-2);
+    border: 1.5px solid var(--driver);
+    border-radius: 12px;
+    padding: 18px 28px;
+    min-width: 260px;
+    text-align: center;
+    position: relative;
+    box-shadow: 0 0 24px transparent;
+    transition: box-shadow .3s;
+    cursor: pointer;
+  }
+  .driver-node.active {
+    box-shadow: 0 0 24px var(--driver-glow);
+  }
+  .driver-node::before {
+    content: '';
+    position: absolute;
+    top: -6px; left: -6px;
+    width: 10px; height: 10px;
+    background: var(--driver);
+    border-radius: 2px;
+  }
+  .node-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--driver);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .node-title {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .node-sub {
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .driver-state {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-2);
+    min-height: 18px;
+  }
+  .driver-state .key { color: var(--text-3); }
+  .driver-state .val { color: var(--result); }
+
+  /* Executor row */
+  .executor-row {
+    display: grid;
+    gap: 16px;
+    z-index: 2;
+    position: relative;
+  }
+  .executor-node {
+    background: var(--surface-2);
+    border: 1.5px solid var(--executor);
+    border-radius: 10px;
+    padding: 14px;
+    text-align: center;
+    position: relative;
+    box-shadow: 0 0 16px transparent;
+    transition: box-shadow .3s, transform .3s;
+    cursor: pointer;
+  }
+  .executor-node.active {
+    box-shadow: 0 0 16px var(--executor-glow);
+  }
+  .executor-node.processing {
+    box-shadow: 0 0 20px var(--executor-glow);
+  }
+  .executor-node.processing::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: 10px;
+    border: 1.5px solid transparent;
+    background: conic-gradient(from 0deg, transparent, var(--executor), transparent) border-box;
+    -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    animation: spin 1.5s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .executor-node .node-label { color: var(--executor); }
+  .partition-box {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+    min-height: 60px;
+  }
+  .partition-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .partition-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    justify-content: center;
+  }
+  .partition-items .data-item {
+    font-size: 10px;
+    padding: 3px 6px;
+    min-width: 28px;
+  }
+  .partition-items .data-item.cat-A { color: #ff9090; border-color: #5a3030; }
+  .partition-items .data-item.cat-B { color: #90c8ff; border-color: #30455a; }
+  .partition-items .data-item.cat-C { color: #c0ff90; border-color: #455a30; }
+  .partial-result {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--executor);
+    min-height: 16px;
+  }
+  .partial-result .key { color: var(--text-3); }
+
+  /* Result row */
+  .result-row {
+    display: flex;
+    justify-content: center;
+    z-index: 2;
+    position: relative;
+  }
+  .result-box {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 24px;
+    min-width: 280px;
+    text-align: center;
+    transition: all .3s;
+  }
+  .result-box.has-result {
+    border-color: var(--result);
+    box-shadow: 0 0 16px rgba(74,222,128,.2);
+  }
+  .result-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .15em;
+    color: var(--text-3);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .result-value {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--result);
+    min-height: 24px;
+  }
+  .result-value.placeholder { color: var(--text-3); font-weight: 400; font-size: 13px; }
+
+  /* Particles for animation */
+  .particle {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    pointer-events: none;
+    z-index: 3;
+    transition: all .8s cubic-bezier(.4,.0,.2,1);
+  }
+  .particle.data    { background: var(--data);    box-shadow: 0 0 8px var(--data-glow); }
+  .particle.task    { background: var(--driver);  box-shadow: 0 0 8px var(--driver-glow); }
+  .particle.result  { background: var(--executor);box-shadow: 0 0 8px var(--executor-glow); }
+  .particle.shuffle { background: var(--shuffle); box-shadow: 0 0 8px var(--shuffle-glow); }
+
+  /* ---- Narration panel ---- */
+  .narration {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    min-height: 540px;
+  }
+  .narration-header {
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+  }
+  .narration-step {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--driver);
+    letter-spacing: .1em;
+    margin-bottom: 6px;
+  }
+  .narration-title {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .narration-body {
+    flex: 1;
+    font-size: 15px;
+    color: var(--text-2);
+    margin-bottom: 20px;
+  }
+  .narration-body p { margin-bottom: 12px; }
+  .narration-body strong { color: var(--text); font-weight: 500; }
+  .narration-body code {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--data);
+  }
+  .narration-key {
+    background: var(--surface-2);
+    border-left: 2px solid var(--driver);
+    padding: 12px 14px;
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+    color: var(--text-2);
+    margin-top: auto;
+  }
+  .narration-key strong {
+    color: var(--text);
+    display: block;
+    margin-bottom: 4px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+
+  /* ---- Controls ---- */
+  .controls {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    justify-content: space-between;
+  }
+  .control-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .control-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .stepper {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .stepper button {
+    background: transparent;
+    border: none;
+    color: var(--text-2);
+    width: 28px; height: 28px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 14px;
+    transition: all .15s;
+  }
+  .stepper button:hover:not(:disabled) {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+  .stepper button:disabled {
+    opacity: .3;
+    cursor: not-allowed;
+  }
+  .stepper-value {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 500;
+    width: 32px;
+    text-align: center;
+    color: var(--text);
+  }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .05em;
+    padding: 10px 18px;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all .15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--surface-3);
+    border-color: var(--text-3);
+  }
+  .btn:disabled {
+    opacity: .4;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: var(--driver);
+    border-color: var(--driver);
+    color: white;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: #d54f15;
+    border-color: #d54f15;
+  }
+
+  /* Step indicator dots */
+  .step-dots {
+    display: flex;
+    gap: 6px;
+  }
+  .step-dot {
+    width: 8px; height: 8px;
+    background: var(--surface-3);
+    border-radius: 2px;
+    transition: all .2s;
+  }
+  .step-dot.complete { background: var(--executor); }
+  .step-dot.current  { background: var(--driver); box-shadow: 0 0 6px var(--driver-glow); }
+
+  /* ---- Footer note ---- */
+  .footnote {
+    margin-top: 32px;
+    padding: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-2);
+    font-size: 14px;
+  }
+  .footnote strong { color: var(--text); }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .05em;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .legend-swatch {
+    width: 8px; height: 8px;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="eyebrow">An interactive primer</div>
+    <h1>Inside <span class="accent">Apache Spark</span></h1>
+    <p class="lead">
+      Spark turns one logical job into many parallel pieces of work running across a cluster of machines.
+      Step through what happens when you click "run" — how data gets split, who does the work, and why
+      some operations are far more expensive than others.
+    </p>
+  </header>
+
+  <!-- Scenario tabs -->
+  <div class="tabs" role="tablist" id="tabs">
+    <button class="tab active" data-scenario="cluster">
+      <span class="tab-num">01</span> Meet the cluster
+    </button>
+    <button class="tab" data-scenario="partition">
+      <span class="tab-num">02</span> Partition the data
+    </button>
+    <button class="tab" data-scenario="sum">
+      <span class="tab-num">03</span> Run a job (no shuffle)
+    </button>
+    <button class="tab" data-scenario="groupby">
+      <span class="tab-num">04</span> Run a job (with shuffle)
+    </button>
+  </div>
+
+  <div class="main">
+
+    <!-- Canvas (visualization) -->
+    <div class="canvas">
+      <div class="canvas-header">
+        <div class="canvas-title">
+          <span class="label" id="scenarioTitle">Cluster Architecture</span>
+          <span style="margin: 0 8px; color: var(--text-3)">·</span>
+          <span id="scenarioSubtitle">Click the nodes to explore</span>
+        </div>
+        <div class="scenario-status" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span id="statusText">idle</span>
+        </div>
+      </div>
+
+      <div class="stage" id="stage">
+        <!-- SVG connections layer -->
+        <svg class="connections" id="connections"></svg>
+
+        <!-- Data source row -->
+        <div class="source-row" id="sourceRow">
+          <div class="data-source">
+            <div class="source-label">Data Source · S3 / HDFS</div>
+            <div class="data-items" id="sourceItems"></div>
+          </div>
+        </div>
+
+        <!-- Driver row -->
+        <div class="driver-row">
+          <div class="driver-node" id="driverNode">
+            <div class="node-label">Driver</div>
+            <div class="node-title">SparkContext</div>
+            <div class="node-sub">Coordinator · Builds plan · Collects results</div>
+            <div class="driver-state" id="driverState">
+              <span class="key">state:</span> idle
+            </div>
+          </div>
+        </div>
+
+        <!-- Executor row -->
+        <div class="executor-row" id="executorRow"></div>
+
+        <!-- Result row -->
+        <div class="result-row" id="resultRow">
+          <div class="result-box" id="resultBox">
+            <div class="result-label">Final Result</div>
+            <div class="result-value placeholder" id="resultValue">— awaiting job —</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Narration panel -->
+    <div class="narration">
+      <div class="narration-header">
+        <div class="narration-step" id="narrStep">STEP · 00</div>
+        <div class="narration-title" id="narrTitle">Welcome to the cluster</div>
+      </div>
+      <div class="narration-body" id="narrBody">
+        <p>Apache Spark is a <strong>distributed computing engine</strong>: it spreads one big job across many machines so they can work on it together.</p>
+        <p>Two kinds of processes do that work. Use the tabs above to explore each scenario, or click the nodes in the diagram to learn what each one does.</p>
+      </div>
+      <div class="narration-key" id="narrKey">
+        <strong>Key Concept</strong>
+        Spark splits work across a cluster. One <em>driver</em> coordinates; many <em>executors</em> do the actual computation in parallel.
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <div class="control-group">
+      <span class="control-label">Executors</span>
+      <div class="stepper">
+        <button id="execMinus">−</button>
+        <span class="stepper-value" id="execCount">3</span>
+        <button id="execPlus">+</button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <div class="step-dots" id="stepDots"></div>
+    </div>
+
+    <div class="control-group">
+      <button class="btn" id="resetBtn">↺ Reset</button>
+      <button class="btn" id="stepBtn">→ Step</button>
+      <button class="btn btn-primary" id="playBtn">▶ Play</button>
+    </div>
+  </div>
+
+  <div class="footnote">
+    <div class="legend" style="margin-bottom: 12px">
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--driver)"></span>Driver / Tasks</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--executor)"></span>Executor / Results</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--data)"></span>Data</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--shuffle)"></span>Shuffle</div>
+    </div>
+    <strong>Tip:</strong> Try the same scenario with different executor counts to see how parallelism changes. Notice that with more executors, each one has less data to process — but with very small datasets, the coordination overhead can outweigh the speedup.
+  </div>
+
+</div>
+
+<script>
+// =====================================================================
+// State
+// =====================================================================
+const STATE = {
+  scenario: 'cluster',
+  numExecutors: 3,
+  currentStep: 0,
+  isPlaying: false,
+  isAnimating: false,
+  abortFlag: false,
+  // Data
+  partitions: [],     // partitions[i] = array of items for executor i
+  partialResults: [], // partialResults[i] = local computation result
+  finalResult: null,
+};
+
+// Source datasets
+const NUMERIC_DATA = [42, 17, 89, 23, 56, 91, 34, 78, 65, 12, 47, 83];
+const CATEGORICAL_DATA = [
+  {v:42,c:'A'},{v:17,c:'B'},{v:89,c:'A'},{v:23,c:'C'},
+  {v:56,c:'B'},{v:91,c:'A'},{v:34,c:'C'},{v:78,c:'A'},
+  {v:65,c:'B'},{v:12,c:'C'},{v:47,c:'A'},{v:83,c:'B'}
+];
+
+// =====================================================================
+// Scenarios — each is a list of steps
+// =====================================================================
+const SCENARIOS = {
+  cluster: {
+    title: 'Cluster Architecture',
+    subtitle: 'Click the nodes to explore',
+    dataType: null,
+    steps: [
+      {
+        title: 'Welcome to the cluster',
+        step: '00 · OVERVIEW',
+        body: `<p>Apache Spark is a <strong>distributed computing engine</strong>: it spreads one big job across many machines so they can work on it together.</p>
+               <p>Two kinds of processes do that work. The <strong style="color: var(--driver)">driver</strong> is the brain — it plans and coordinates. The <strong style="color: var(--executor)">executors</strong> are the muscle — they actually crunch the data.</p>
+               <p>Click each node in the diagram to learn more, then use the tabs above to see them in action.</p>`,
+        key: {
+          title: 'Key Concept',
+          body: 'One <em>driver</em> coordinates; many <em>executors</em> do the work in parallel. They communicate over the network.'
+        },
+      },
+    ],
+  },
+
+  partition: {
+    title: 'Partitioning the Data',
+    subtitle: 'See how Spark splits data across workers',
+    dataType: 'numeric',
+    steps: [
+      {
+        title: 'Why partition?',
+        step: '01 · MOTIVATION',
+        body: `<p>A dataset might be too big for one machine — or even if it fits, processing it on one core is slow.</p>
+               <p>Spark's answer: <strong>split the data into chunks called partitions</strong>, and give one partition to each executor. The dataset above has <code>12</code> items, ready to be split.</p>
+               <p>Click <strong>Step</strong> to watch the driver distribute the data.</p>`,
+        action: 'reset_partition_view',
+        key: {
+          title: 'Why this matters',
+          body: 'Partitioning is the foundation of parallelism. With N partitions across N executors, you can process N×faster (in theory).'
+        },
+      },
+      {
+        title: 'Driver plans the distribution',
+        step: '02 · PLANNING',
+        body: `<p>The driver looks at the data source and decides how to slice it. With <strong id="executorCountInline">3</strong> executors and 12 records, each executor will get <strong id="recordsPerExecutor">4</strong> records.</p>
+               <p>In real Spark, the partition strategy depends on the data source — files split by block size on HDFS, by ranges on a database, etc.</p>`,
+        action: 'driver_planning',
+        key: {
+          title: 'The plan',
+          body: 'The driver doesn\'t touch the data itself. It just decides who reads what.'
+        },
+      },
+      {
+        title: 'Executors load their partition',
+        step: '03 · DISTRIBUTION',
+        body: `<p>Each executor pulls in its assigned chunk. The data flies from the source <strong>directly to the executors</strong>, not through the driver.</p>
+               <p>This is critical: the driver would be a bottleneck if all the data flowed through it. By going executor-to-storage directly, Spark scales horizontally.</p>`,
+        action: 'distribute_data',
+        key: {
+          title: 'Direct reads',
+          body: 'Executors read from storage in parallel. The driver only coordinates — it never holds the full dataset.'
+        },
+      },
+      {
+        title: 'Ready to compute',
+        step: '04 · READY',
+        body: `<p>Now each executor has its own partition sitting in memory. They can each work on their chunk independently, in parallel, without talking to each other.</p>
+               <p>This setup — data partitioned and resident in executor memory — is what makes the rest of Spark possible. Move on to the next scenario to see a job run on it.</p>`,
+        action: 'idle',
+        key: {
+          title: 'Data locality',
+          body: 'Each executor now holds a small slice of the whole. From here, all the parallel computation flows.'
+        },
+      },
+    ],
+  },
+
+  sum: {
+    title: 'Sum (narrow transformation)',
+    subtitle: 'No data movement needed between executors',
+    dataType: 'numeric',
+    steps: [
+      {
+        title: 'The job: rdd.sum()',
+        step: '01 · SUBMIT',
+        body: `<p>We want to add up all 12 numbers. In Spark code: <code>rdd.sum()</code>.</p>
+               <p>The data is already partitioned across executors from the previous step. Now the driver needs to turn this one-line request into something the cluster can run.</p>`,
+        action: 'load_and_partition',
+        key: {
+          title: 'Lazy until now',
+          body: 'Spark didn\'t actually compute anything until you called <code>sum()</code>. That call is an "action" — it triggers real work.'
+        },
+      },
+      {
+        title: 'Driver builds the execution plan',
+        step: '02 · PLAN',
+        body: `<p>The driver figures out: <strong>each executor sums its local partition, then we add those partial sums together.</strong></p>
+               <p>Because each executor only needs its own data — no info from siblings — this is called a <strong>narrow transformation</strong>. It's the easy case.</p>`,
+        action: 'driver_planning',
+        key: {
+          title: 'Narrow = cheap',
+          body: 'Narrow transformations need no network shuffle. They\'re the operations Spark runs fastest.'
+        },
+      },
+      {
+        title: 'Driver dispatches tasks',
+        step: '03 · DISPATCH',
+        body: `<p>The driver sends one small task to each executor: <em>"sum your partition and report back."</em></p>
+               <p>Notice: the driver is sending tiny instruction packets, not data. The data already lives on the executors.</p>`,
+        action: 'dispatch_tasks',
+        key: {
+          title: 'Code → data',
+          body: 'Spark ships code to where the data is, not the other way around. Moving code is cheap; moving data is expensive.'
+        },
+      },
+      {
+        title: 'Executors compute in parallel',
+        step: '04 · EXECUTE',
+        body: `<p>All executors run their local sum <strong>simultaneously</strong>. With 3 executors, the wall-clock time is roughly 1/3 of doing it sequentially.</p>
+               <p>This is where Spark earns its keep: real parallel work on independent data.</p>`,
+        action: 'execute_local',
+        key: {
+          title: 'Parallel speedup',
+          body: 'With N executors processing equal partitions, expect close to N× speedup for narrow transformations.'
+        },
+      },
+      {
+        title: 'Partial results return to driver',
+        step: '05 · COLLECT',
+        body: `<p>Each executor sends its single number back to the driver. These return packets are tiny — one int per executor.</p>
+               <p>This is the kind of communication Spark loves: lots of work happens locally, only summaries cross the network.</p>`,
+        action: 'collect_results',
+        key: {
+          title: 'Reduce phase',
+          body: 'Returning small aggregates instead of raw data is what makes Spark scale to terabytes.'
+        },
+      },
+      {
+        title: 'Driver computes final answer',
+        step: '06 · FINISH',
+        body: `<p>The driver adds the partial sums together. That single number is your final result, ready to return to your program.</p>
+               <p>That's the whole pattern for narrow transformations: <strong>map locally, reduce small.</strong> Now let's see what happens when an operation can't be done so cleanly.</p>`,
+        action: 'finalize_sum',
+        key: {
+          title: 'Pattern complete',
+          body: 'Map (local work) → Reduce (combine summaries). The bread and butter of distributed computing.'
+        },
+      },
+    ],
+  },
+
+  groupby: {
+    title: 'Group by category (wide transformation)',
+    subtitle: 'Requires shuffling — the expensive operation',
+    dataType: 'categorical',
+    steps: [
+      {
+        title: 'The job: groupBy(category).count()',
+        step: '01 · SUBMIT',
+        body: `<p>Now each record has a value and a <strong>category</strong> (A, B, or C). We want to count records per category.</p>
+               <p>This is harder than sum: records of the same category might live on <strong>different executors</strong>. Watch what Spark does.</p>`,
+        action: 'load_and_partition_categorical',
+        key: {
+          title: 'The challenge',
+          body: 'To count all "A"s, we need every "A" record in one place. But they\'re scattered across executors.'
+        },
+      },
+      {
+        title: 'Stage 1: count locally',
+        step: '02 · LOCAL COUNT',
+        body: `<p>Spark splits this into two stages. <strong>Stage 1:</strong> each executor counts categories in its own partition. This is cheap — it's a narrow transformation again.</p>
+               <p>Watch each executor produce a partial map like <code>{A: 2, B: 1, C: 1}</code>.</p>`,
+        action: 'execute_local_count',
+        key: {
+          title: 'Pre-aggregation',
+          body: 'Counting locally first dramatically reduces what we need to send over the network in the next step.'
+        },
+      },
+      {
+        title: 'The shuffle: redistribute by key',
+        step: '03 · SHUFFLE',
+        body: `<p>Here it comes. Spark <strong>shuffles</strong> the partial counts so all records for category A end up on one executor, all B on another, all C on a third.</p>
+               <p>This requires <strong>every executor talking to every other executor</strong>: serialize data, push it across the network, deserialize on the other side. It's the most expensive thing Spark does.</p>`,
+        action: 'shuffle',
+        key: {
+          title: 'Why shuffles hurt',
+          body: 'Network I/O is ~100x slower than memory. Disk spills, serialization, and the all-to-all communication pattern make shuffles the #1 bottleneck in Spark jobs.'
+        },
+      },
+      {
+        title: 'Stage 2: combine the shuffled data',
+        step: '04 · FINAL COUNT',
+        body: `<p>After the shuffle, each executor has all the partial counts for one category. It adds them up to get the true total.</p>
+               <p>This is a <strong>wide transformation</strong>: the output of any task depends on data from every input partition. That dependency is why the shuffle was necessary.</p>`,
+        action: 'execute_final_count',
+        key: {
+          title: 'Stages, defined',
+          body: 'A stage is a chunk of work with no shuffles in the middle. Shuffles are where Spark draws stage boundaries.'
+        },
+      },
+      {
+        title: 'Driver collects the final result',
+        step: '05 · FINISH',
+        body: `<p>Each executor sends its category's final count back to the driver, which assembles the answer.</p>
+               <p>Compare this to the sum job: same overall shape, but the shuffle in the middle is the difference between a fast operation and a slow one. <strong>Tuning Spark jobs is mostly about minimizing or optimizing shuffles.</strong></p>`,
+        action: 'finalize_groupby',
+        key: {
+          title: 'The big lesson',
+          body: 'Narrow transformations are cheap. Wide transformations require shuffles. Real-world performance tuning lives in this distinction.'
+        },
+      },
+    ],
+  },
+};
+
+// =====================================================================
+// DOM refs
+// =====================================================================
+const $ = id => document.getElementById(id);
+const stage = $('stage');
+const sourceRow = $('sourceRow');
+const sourceItems = $('sourceItems');
+const driverNode = $('driverNode');
+const driverState = $('driverState');
+const executorRow = $('executorRow');
+const resultRow = $('resultRow');
+const resultBox = $('resultBox');
+const resultValue = $('resultValue');
+const connections = $('connections');
+
+const narrStep = $('narrStep');
+const narrTitle = $('narrTitle');
+const narrBody = $('narrBody');
+const narrKey = $('narrKey');
+
+const scenarioTitle = $('scenarioTitle');
+const scenarioSubtitle = $('scenarioSubtitle');
+const statusText = $('statusText');
+const statusIndicator = $('statusIndicator');
+
+const execCount = $('execCount');
+const stepDots = $('stepDots');
+
+// =====================================================================
+// Render functions
+// =====================================================================
+
+function renderSource(dataType) {
+  sourceItems.innerHTML = '';
+  if (!dataType) { sourceRow.style.opacity = .3; return; }
+  sourceRow.style.opacity = 1;
+  const items = dataType === 'numeric' ? NUMERIC_DATA : CATEGORICAL_DATA;
+  items.forEach((item, i) => {
+    const el = document.createElement('div');
+    el.className = 'data-item';
+    el.dataset.idx = i;
+    if (dataType === 'categorical') {
+      el.classList.add('cat-' + item.c);
+      el.textContent = item.c;
+      el.title = `value: ${item.v}, category: ${item.c}`;
+    } else {
+      el.textContent = item;
+    }
+    sourceItems.appendChild(el);
+  });
+}
+
+function renderExecutors() {
+  executorRow.innerHTML = '';
+  executorRow.style.gridTemplateColumns = `repeat(${STATE.numExecutors}, 1fr)`;
+  for (let i = 0; i < STATE.numExecutors; i++) {
+    const node = document.createElement('div');
+    node.className = 'executor-node';
+    node.id = `exec-${i}`;
+    node.innerHTML = `
+      <div class="node-label">Executor ${i+1}</div>
+      <div class="node-title">JVM</div>
+      <div class="node-sub">Worker process</div>
+      <div class="partition-box">
+        <div class="partition-label">Partition ${i+1}</div>
+        <div class="partition-items" id="partition-${i}">
+          <span style="color: var(--text-3); font-size: 10px; font-family: var(--mono)">empty</span>
+        </div>
+        <div class="partial-result" id="partial-${i}"></div>
+      </div>
+    `;
+    node.addEventListener('click', () => onExecutorClick(i));
+    executorRow.appendChild(node);
+  }
+}
+
+function renderPartition(i, items, dataType) {
+  const el = $(`partition-${i}`);
+  if (!items || items.length === 0) {
+    el.innerHTML = '<span style="color: var(--text-3); font-size: 10px; font-family: var(--mono)">empty</span>';
+    return;
+  }
+  el.innerHTML = '';
+  items.forEach(item => {
+    const it = document.createElement('div');
+    it.className = 'data-item';
+    if (dataType === 'categorical') {
+      it.classList.add('cat-' + item.c);
+      it.textContent = item.c;
+      it.title = `value: ${item.v}`;
+    } else {
+      it.textContent = item;
+    }
+    el.appendChild(it);
+  });
+}
+
+function setPartialResult(i, html) {
+  const el = $(`partial-${i}`);
+  el.innerHTML = html || '';
+}
+
+function setDriverState(html) {
+  driverState.innerHTML = html;
+}
+
+function setResult(html, real=false) {
+  if (real) {
+    resultValue.classList.remove('placeholder');
+    resultBox.classList.add('has-result');
+  } else {
+    resultValue.classList.add('placeholder');
+    resultBox.classList.remove('has-result');
+  }
+  resultValue.innerHTML = html;
+}
+
+function setStatus(text, running=false) {
+  statusText.textContent = text;
+  statusIndicator.classList.toggle('running', running);
+}
+
+function renderStepDots() {
+  const totalSteps = SCENARIOS[STATE.scenario].steps.length;
+  stepDots.innerHTML = '';
+  for (let i = 0; i < totalSteps; i++) {
+    const d = document.createElement('div');
+    d.className = 'step-dot';
+    if (i < STATE.currentStep) d.classList.add('complete');
+    if (i === STATE.currentStep) d.classList.add('current');
+    stepDots.appendChild(d);
+  }
+}
+
+function renderNarration() {
+  const scenario = SCENARIOS[STATE.scenario];
+  const step = scenario.steps[STATE.currentStep];
+  if (!step) return;
+  narrStep.textContent = 'STEP · ' + step.step;
+  narrTitle.textContent = step.title;
+  narrBody.innerHTML = step.body;
+
+  // Patch in dynamic values
+  const inline = document.getElementById('executorCountInline');
+  if (inline) inline.textContent = STATE.numExecutors;
+  const rpe = document.getElementById('recordsPerExecutor');
+  if (rpe) rpe.textContent = Math.floor(12 / STATE.numExecutors);
+
+  if (step.key) {
+    narrKey.innerHTML = `<strong>${step.key.title}</strong>${step.key.body}`;
+    narrKey.style.display = '';
+  } else {
+    narrKey.style.display = 'none';
+  }
+
+  scenarioTitle.textContent = scenario.title;
+  scenarioSubtitle.textContent = scenario.subtitle;
+}
+
+// =====================================================================
+// Connection lines (SVG)
+// =====================================================================
+function drawConnections() {
+  const stageRect = stage.getBoundingClientRect();
+  connections.setAttribute('width', stageRect.width);
+  connections.setAttribute('height', stageRect.height);
+  connections.setAttribute('viewBox', `0 0 ${stageRect.width} ${stageRect.height}`);
+  connections.innerHTML = '';
+
+  const driverRect = driverNode.getBoundingClientRect();
+  const dx = driverRect.left + driverRect.width/2 - stageRect.left;
+  const dy = driverRect.bottom - stageRect.top;
+
+  for (let i = 0; i < STATE.numExecutors; i++) {
+    const ex = $(`exec-${i}`);
+    if (!ex) continue;
+    const r = ex.getBoundingClientRect();
+    const ex_x = r.left + r.width/2 - stageRect.left;
+    const ex_y = r.top - stageRect.top;
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const midY = (dy + ex_y) / 2;
+    line.setAttribute('d', `M ${dx} ${dy} C ${dx} ${midY}, ${ex_x} ${midY}, ${ex_x} ${ex_y}`);
+    line.setAttribute('class', 'conn-line');
+    line.id = `conn-driver-${i}`;
+    connections.appendChild(line);
+  }
+}
+
+function activateConnection(idx, type='active') {
+  const c = $(`conn-driver-${idx}`);
+  if (c) c.setAttribute('class', `conn-line ${type}`);
+}
+function deactivateConnections() {
+  for (let i = 0; i < STATE.numExecutors; i++) {
+    const c = $(`conn-driver-${i}`);
+    if (c) c.setAttribute('class', 'conn-line');
+  }
+}
+
+// =====================================================================
+// Particle animation (data flying between nodes)
+// =====================================================================
+function flyParticle(fromEl, toEl, opts={}) {
+  return new Promise(resolve => {
+    if (STATE.abortFlag) { resolve(); return; }
+    const cssClass = opts.class || 'data';
+    const duration = opts.duration || 700;
+    const delay = opts.delay || 0;
+    const stageRect = stage.getBoundingClientRect();
+    const fr = fromEl.getBoundingClientRect();
+    const tr = toEl.getBoundingClientRect();
+    const x1 = fr.left + fr.width/2 - stageRect.left - 4;
+    const y1 = fr.top + fr.height/2 - stageRect.top - 4;
+    const x2 = tr.left + tr.width/2 - stageRect.left - 4;
+    const y2 = tr.top + tr.height/2 - stageRect.top - 4;
+
+    const p = document.createElement('div');
+    p.className = 'particle ' + cssClass;
+    p.style.left = x1 + 'px';
+    p.style.top = y1 + 'px';
+    p.style.transitionDuration = duration + 'ms';
+    if (opts.label) {
+      p.innerHTML = `<span style="position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:10px;color:inherit;white-space:nowrap">${opts.label}</span>`;
+    }
+    stage.appendChild(p);
+
+    setTimeout(() => {
+      p.style.left = x2 + 'px';
+      p.style.top = y2 + 'px';
+    }, 20 + delay);
+
+    setTimeout(() => {
+      p.remove();
+      resolve();
+    }, duration + delay + 50);
+  });
+}
+
+const sleep = ms => new Promise(r => {
+  const t = setTimeout(() => r(), ms);
+  // Allow aborting
+  const interval = setInterval(() => {
+    if (STATE.abortFlag) { clearTimeout(t); clearInterval(interval); r(); }
+  }, 50);
+});
+
+// =====================================================================
+// Helpers
+// =====================================================================
+function partition(data, n) {
+  // Round-robin partition
+  const result = Array.from({length: n}, () => []);
+  data.forEach((item, i) => result[i % n].push(item));
+  return result;
+}
+
+function clearExecutors() {
+  for (let i = 0; i < STATE.numExecutors; i++) {
+    renderPartition(i, [], null);
+    setPartialResult(i, '');
+    const ex = $(`exec-${i}`);
+    if (ex) ex.classList.remove('active','processing');
+  }
+}
+
+function clearAllParticles() {
+  document.querySelectorAll('.particle').forEach(p => p.remove());
+}
+
+async function softReset() {
+  // Signal any in-flight animation to abort
+  STATE.abortFlag = true;
+  STATE.isPlaying = false;
+  const playBtn = document.getElementById('playBtn');
+  if (playBtn) playBtn.innerHTML = '▶ Play';
+
+  // Wait for any in-flight animation to actually finish/abort
+  let waits = 0;
+  while (STATE.isAnimating && waits++ < 100) {
+    await new Promise(r => setTimeout(r, 20));
+  }
+  STATE.abortFlag = false;
+
+  clearAllParticles();
+  clearExecutors();
+  driverNode.classList.remove('active');
+  setDriverState('<span class="key">state:</span> idle');
+  setResult('— awaiting job —', false);
+  setStatus('idle', false);
+  deactivateConnections();
+  STATE.partitions = [];
+  STATE.partialResults = [];
+  STATE.finalResult = null;
+  STATE._shuffledIn = null;
+  STATE._finalCounts = null;
+}
+
+// =====================================================================
+// Step actions — these are the actual animations
+// =====================================================================
+async function performAction(action) {
+  if (STATE.isAnimating) return;
+  STATE.isAnimating = true;
+  setStatus('running', true);
+
+  try {
+    switch (action) {
+      case 'reset_partition_view':
+        renderSource('numeric');
+        clearExecutors();
+        setDriverState('<span class="key">state:</span> waiting');
+        break;
+
+      case 'driver_planning':
+        driverNode.classList.add('active');
+        setDriverState('<span class="key">state:</span> building plan...');
+        await sleep(800);
+        setDriverState('<span class="key">plan:</span> read input → partition → distribute');
+        break;
+
+      case 'distribute_data': {
+        const data = NUMERIC_DATA;
+        STATE.partitions = partition(data, STATE.numExecutors);
+        // Animate data flying from source to executors
+        const itemEls = sourceItems.querySelectorAll('.data-item');
+        const promises = [];
+        for (let i = 0; i < data.length; i++) {
+          const targetExec = i % STATE.numExecutors;
+          const targetEl = $(`exec-${targetExec}`);
+          activateConnection(targetExec);
+          promises.push(flyParticle(itemEls[i], targetEl, {
+            class: 'data',
+            duration: 700,
+            delay: i * 80,
+          }));
+          // Hide original after dispatch
+          setTimeout(() => itemEls[i].classList.add('dispatched'), i * 80 + 400);
+          // After particle arrives, add to partition
+          setTimeout(() => {
+            if (STATE.abortFlag) return;
+            const current = STATE.partitions[targetExec].slice(0, Math.floor(i / STATE.numExecutors) + 1);
+            renderPartition(targetExec, current, 'numeric');
+          }, i * 80 + 720);
+        }
+        await Promise.all(promises);
+        await sleep(200);
+        deactivateConnections();
+        setDriverState('<span class="key">state:</span> data partitioned across executors');
+        break;
+      }
+
+      case 'idle':
+        deactivateConnections();
+        setDriverState('<span class="key">state:</span> idle — ready for jobs');
+        driverNode.classList.remove('active');
+        break;
+
+      case 'load_and_partition': {
+        // Quick non-animated setup
+        renderSource('numeric');
+        STATE.partitions = partition(NUMERIC_DATA, STATE.numExecutors);
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          renderPartition(i, STATE.partitions[i], 'numeric');
+        }
+        sourceItems.querySelectorAll('.data-item').forEach(e => e.classList.add('dispatched'));
+        setDriverState('<span class="key">job:</span> rdd.sum()');
+        break;
+      }
+
+      case 'dispatch_tasks': {
+        driverNode.classList.add('active');
+        setDriverState('<span class="key">state:</span> dispatching tasks...');
+        const promises = [];
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          activateConnection(i);
+          const target = $(`exec-${i}`);
+          promises.push(flyParticle(driverNode, target, {
+            class: 'task',
+            duration: 600,
+            delay: i * 150,
+          }));
+        }
+        await Promise.all(promises);
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          const ex = $(`exec-${i}`);
+          ex.classList.add('active');
+        }
+        await sleep(200);
+        break;
+      }
+
+      case 'execute_local': {
+        // Start processing animation on each executor
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          const ex = $(`exec-${i}`);
+          ex.classList.add('processing');
+        }
+        deactivateConnections();
+        setDriverState('<span class="key">state:</span> waiting for executors...');
+        await sleep(1400);
+        // Compute and show partial sums
+        STATE.partialResults = STATE.partitions.map(p => p.reduce((a,b) => a+b, 0));
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          const ex = $(`exec-${i}`);
+          ex.classList.remove('processing');
+          const partial = STATE.partialResults[i];
+          setPartialResult(i, `<span class="key">sum:</span> ${partial}`);
+        }
+        await sleep(300);
+        break;
+      }
+
+      case 'collect_results': {
+        setDriverState('<span class="key">state:</span> collecting results...');
+        const promises = [];
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          activateConnection(i);
+          const source = $(`exec-${i}`);
+          promises.push(flyParticle(source, driverNode, {
+            class: 'result',
+            duration: 700,
+            delay: i * 120,
+            label: STATE.partialResults[i].toString(),
+          }));
+        }
+        await Promise.all(promises);
+        deactivateConnections();
+        break;
+      }
+
+      case 'finalize_sum': {
+        const total = STATE.partialResults.reduce((a,b) => a+b, 0);
+        setDriverState(`<span class="key">computing:</span> ${STATE.partialResults.join(' + ')}`);
+        await sleep(700);
+        setDriverState(`<span class="key">result:</span> <span class="val">${total}</span>`);
+        setResult(total.toString(), true);
+        driverNode.classList.remove('active');
+        break;
+      }
+
+      // --- groupBy scenario ---
+
+      case 'load_and_partition_categorical': {
+        renderSource('categorical');
+        STATE.partitions = partition(CATEGORICAL_DATA, STATE.numExecutors);
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          renderPartition(i, STATE.partitions[i], 'categorical');
+        }
+        sourceItems.querySelectorAll('.data-item').forEach(e => e.classList.add('dispatched'));
+        setDriverState('<span class="key">job:</span> rdd.groupBy(c).count()');
+        break;
+      }
+
+      case 'execute_local_count': {
+        driverNode.classList.add('active');
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          activateConnection(i);
+          const target = $(`exec-${i}`);
+          await flyParticle(driverNode, target, { class: 'task', duration: 400 });
+        }
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          $(`exec-${i}`).classList.add('processing');
+        }
+        deactivateConnections();
+        setDriverState('<span class="key">stage 1:</span> local counts');
+        await sleep(1400);
+
+        STATE.partialResults = STATE.partitions.map(part => {
+          const counts = {A:0, B:0, C:0};
+          part.forEach(r => counts[r.c]++);
+          return counts;
+        });
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          $(`exec-${i}`).classList.remove('processing');
+          const c = STATE.partialResults[i];
+          const parts = ['A','B','C']
+            .filter(k => c[k] > 0)
+            .map(k => `<span class="cat-${k}" style="color: ${k==='A'?'#ff9090':k==='B'?'#90c8ff':'#c0ff90'}">${k}:${c[k]}</span>`)
+            .join(' ');
+          setPartialResult(i, parts);
+        }
+        await sleep(400);
+        break;
+      }
+
+      case 'shuffle': {
+        setDriverState('<span class="key">stage boundary:</span> SHUFFLE');
+        driverNode.classList.add('active');
+
+        // Assign each category to a destination executor (round-robin among first 3)
+        const cats = ['A','B','C'];
+        const destFor = {};
+        cats.forEach((c, i) => {
+          destFor[c] = i % STATE.numExecutors;
+        });
+
+        // Build shuffle particles: from each source executor, send counts to each destination
+        const promises = [];
+        let delayBase = 0;
+        for (let src = 0; src < STATE.numExecutors; src++) {
+          const counts = STATE.partialResults[src];
+          const srcEl = $(`exec-${src}`);
+          for (const cat of cats) {
+            if (counts[cat] > 0) {
+              const dst = destFor[cat];
+              if (dst === src) continue; // stays local (no shuffle needed)
+              const dstEl = $(`exec-${dst}`);
+              promises.push(flyParticle(srcEl, dstEl, {
+                class: 'shuffle',
+                duration: 900,
+                delay: delayBase,
+                label: `${cat}:${counts[cat]}`,
+              }));
+              delayBase += 100;
+            }
+          }
+        }
+
+        // Activate shuffle connections (all-to-all)
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          activateConnection(i, 'active shuffle');
+        }
+
+        await Promise.all(promises);
+        deactivateConnections();
+
+        // Update executor partial results to show shuffled-in data
+        // Reorganize: each destination now has all counts for its category
+        const shuffledIn = Array.from({length: STATE.numExecutors}, () => ({}));
+        for (let src = 0; src < STATE.numExecutors; src++) {
+          const counts = STATE.partialResults[src];
+          for (const cat of cats) {
+            if (counts[cat] > 0) {
+              const dst = destFor[cat];
+              if (!shuffledIn[dst][cat]) shuffledIn[dst][cat] = [];
+              shuffledIn[dst][cat].push(counts[cat]);
+            }
+          }
+        }
+
+        // Clear partitions visually and replace with the shuffled data
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          const el = $(`partition-${i}`);
+          const incoming = shuffledIn[i];
+          const keys = Object.keys(incoming);
+          if (keys.length === 0) {
+            el.innerHTML = '<span style="color: var(--text-3); font-size: 10px; font-family: var(--mono)">(idle)</span>';
+            setPartialResult(i, '');
+            continue;
+          }
+          // Show shuffled values for the category this executor now owns
+          el.innerHTML = '';
+          const lbl = document.createElement('div');
+          lbl.style.fontFamily = 'var(--mono)';
+          lbl.style.fontSize = '10px';
+          lbl.style.color = 'var(--shuffle)';
+          lbl.style.marginBottom = '4px';
+          lbl.textContent = `received: ${keys.join(',')}`;
+          el.appendChild(lbl);
+          for (const cat of keys) {
+            incoming[cat].forEach(v => {
+              const it = document.createElement('div');
+              it.className = `data-item cat-${cat}`;
+              it.textContent = `${cat}:${v}`;
+              el.appendChild(it);
+            });
+          }
+          setPartialResult(i, '');
+        }
+        STATE._shuffledIn = shuffledIn;
+        await sleep(400);
+        break;
+      }
+
+      case 'execute_final_count': {
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          $(`exec-${i}`).classList.add('processing');
+        }
+        await sleep(1200);
+        const finalCounts = {};
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          $(`exec-${i}`).classList.remove('processing');
+          const incoming = STATE._shuffledIn[i];
+          const keys = Object.keys(incoming);
+          if (keys.length === 0) {
+            setPartialResult(i, '<span class="key">no work</span>');
+            continue;
+          }
+          let parts = [];
+          for (const cat of keys) {
+            const total = incoming[cat].reduce((a,b)=>a+b, 0);
+            finalCounts[cat] = total;
+            const col = cat==='A'?'#ff9090':cat==='B'?'#90c8ff':'#c0ff90';
+            parts.push(`<span style="color:${col}">${cat}=${total}</span>`);
+          }
+          setPartialResult(i, parts.join(' '));
+        }
+        STATE._finalCounts = finalCounts;
+        await sleep(300);
+        break;
+      }
+
+      case 'finalize_groupby': {
+        const counts = STATE._finalCounts;
+        const promises = [];
+        for (let i = 0; i < STATE.numExecutors; i++) {
+          activateConnection(i);
+          const incoming = STATE._shuffledIn[i];
+          if (Object.keys(incoming).length === 0) continue;
+          promises.push(flyParticle($(`exec-${i}`), driverNode, {
+            class: 'result',
+            duration: 700,
+            delay: i * 150,
+          }));
+        }
+        await Promise.all(promises);
+        deactivateConnections();
+        const sorted = ['A','B','C'].filter(k => counts[k] !== undefined);
+        const parts = sorted.map(k => `${k}=${counts[k]}`).join(', ');
+        setDriverState(`<span class="key">result:</span> <span class="val">{${parts}}</span>`);
+        setResult(`{ ${parts} }`, true);
+        driverNode.classList.remove('active');
+        break;
+      }
+    }
+  } finally {
+    STATE.isAnimating = false;
+    setStatus('ready', false);
+  }
+}
+
+// =====================================================================
+// Step / play / reset control
+// =====================================================================
+async function goToStep(idx) {
+  const scenario = SCENARIOS[STATE.scenario];
+  if (idx < 0 || idx >= scenario.steps.length) return;
+  STATE.currentStep = idx;
+  renderNarration();
+  renderStepDots();
+  const step = scenario.steps[idx];
+  if (step.action) await performAction(step.action);
+}
+
+async function nextStep() {
+  const scenario = SCENARIOS[STATE.scenario];
+  if (STATE.isAnimating) return;
+  if (STATE.currentStep < scenario.steps.length - 1) {
+    await goToStep(STATE.currentStep + 1);
+  }
+}
+
+async function play() {
+  if (STATE.isPlaying) {
+    STATE.isPlaying = false;
+    document.getElementById('playBtn').innerHTML = '▶ Play';
+    return;
+  }
+  STATE.isPlaying = true;
+  document.getElementById('playBtn').innerHTML = '❚❚ Pause';
+  const scenario = SCENARIOS[STATE.scenario];
+  while (STATE.isPlaying && STATE.currentStep < scenario.steps.length - 1) {
+    await nextStep();
+    await sleep(1500);
+  }
+  STATE.isPlaying = false;
+  document.getElementById('playBtn').innerHTML = '▶ Play';
+}
+
+async function switchScenario(name) {
+  STATE.scenario = name;
+  STATE.currentStep = 0;
+  await softReset();
+
+  // Set up initial state based on scenario
+  const scenario = SCENARIOS[name];
+  renderSource(scenario.dataType);
+  if (name === 'cluster') {
+    sourceRow.style.opacity = .25;
+  } else {
+    sourceRow.style.opacity = 1;
+  }
+
+  // Update tab visual
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.scenario === name);
+  });
+
+  // Wait for layout, then redraw connections
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  drawConnections();
+
+  // CRITICAL: actually run step 0's setup action so partitions, driver state, etc. are populated.
+  // Without this, scenarios 3 and 4 would step through with empty partitions and produce wrong results.
+  await goToStep(0);
+}
+
+function onExecutorClick(i) {
+  if (STATE.scenario !== 'cluster') return;
+  narrStep.textContent = `STEP · EXECUTOR ${i+1}`;
+  narrTitle.textContent = 'Executor';
+  narrBody.innerHTML = `
+    <p>I'm Executor ${i+1} — a <strong>JVM process</strong> running on a worker node.</p>
+    <p>My jobs:</p>
+    <p>• Hold one or more <strong>partitions</strong> of the dataset in memory<br>
+       • Run <strong>tasks</strong> sent to me by the driver<br>
+       • Cache RDDs when asked, to speed up repeated queries<br>
+       • Talk to other executors during <strong>shuffles</strong></p>
+    <p>I never see the full dataset — only my slice. That's the whole point.</p>`;
+  narrKey.innerHTML = `<strong>Executor role</strong>The muscle. Process data locally, in parallel with siblings, with no awareness of the bigger picture.`;
+}
+
+function onDriverClick() {
+  if (STATE.scenario !== 'cluster') return;
+  narrStep.textContent = `STEP · DRIVER`;
+  narrTitle.textContent = 'Driver';
+  narrBody.innerHTML = `
+    <p>I'm the Driver — the <strong>process that runs your main program</strong>.</p>
+    <p>My jobs:</p>
+    <p>• Hold the <strong>SparkContext</strong> — the entry point to all Spark functionality<br>
+       • Convert your code into a <strong>DAG</strong> of stages and tasks<br>
+       • Decide which executor does which task<br>
+       • Track progress and collect final results<br>
+       • Recover from failures by rescheduling work</p>
+    <p>If I crash, the whole job dies. If an executor crashes, I just retry its tasks elsewhere.</p>`;
+  narrKey.innerHTML = `<strong>Driver role</strong>The brain. Coordinates everything but never does heavy lifting on the data itself.`;
+}
+
+// =====================================================================
+// Wire up controls
+// =====================================================================
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => switchScenario(tab.dataset.scenario));
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  STATE.isPlaying = false;
+  document.getElementById('playBtn').innerHTML = '▶ Play';
+  switchScenario(STATE.scenario);
+});
+
+document.getElementById('stepBtn').addEventListener('click', nextStep);
+document.getElementById('playBtn').addEventListener('click', play);
+
+document.getElementById('execPlus').addEventListener('click', () => {
+  if (STATE.numExecutors < 4) {
+    STATE.numExecutors++;
+    execCount.textContent = STATE.numExecutors;
+    renderExecutors();
+    switchScenario(STATE.scenario);
+  }
+});
+document.getElementById('execMinus').addEventListener('click', () => {
+  if (STATE.numExecutors > 2) {
+    STATE.numExecutors--;
+    execCount.textContent = STATE.numExecutors;
+    renderExecutors();
+    switchScenario(STATE.scenario);
+  }
+});
+
+driverNode.addEventListener('click', onDriverClick);
+
+// Redraw connections on resize
+window.addEventListener('resize', () => {
+  requestAnimationFrame(drawConnections);
+});
+
+// =====================================================================
+// Init
+// =====================================================================
+renderExecutors();
+renderSource(null);
+switchScenario('cluster');
+// Initial draw after layout
+requestAnimationFrame(() => requestAnimationFrame(drawConnections));
+// Redraw again after fonts load
+document.fonts && document.fonts.ready.then(() => drawConnections());
+</script>
+</body>
+</html>
