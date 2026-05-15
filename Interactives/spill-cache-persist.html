@@ -1,0 +1,2275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spill, Cache, Persist · Memory in Spark</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:           #0a0e1a;
+    --surface:      #131826;
+    --surface-2:    #1c2333;
+    --surface-3:    #252d40;
+    --border:       #2a3447;
+    --border-bright:#3a4660;
+    --text:         #e8ecef;
+    --text-2:       #8b95a6;
+    --text-3:       #5a6478;
+    --driver:       #e25a1c;
+    --executor:     #00d9b8;
+    --executor-glow:rgba(0,217,184,.3);
+    --data:         #ffc857;
+    --data-glow:    rgba(255,200,87,.3);
+    --result:       #4ade80;
+    --shuffle:      #c084fc;
+    --shuffle-glow: rgba(192,132,252,.3);
+    --info:         #60a5fa;
+    --info-glow:    rgba(96,165,250,.35);
+    --danger:       #ef4444;
+    --danger-glow:  rgba(239,68,68,.35);
+    --warning:      #fbbf24;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --sans: 'Sora', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-weight: 300;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  body {
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(239,68,68,.06), transparent),
+      radial-gradient(ellipse 60% 40% at 80% 100%, rgba(96,165,250,.04), transparent),
+      var(--bg);
+    background-attachment: fixed;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px);
+    background-size: 32px 32px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { max-width: 1280px; margin: 0 auto; padding: 48px 32px 80px; position: relative; z-index: 1; }
+
+  /* ---- Header ---- */
+  header { margin-bottom: 40px; border-bottom: 1px solid var(--border); padding-bottom: 32px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .25em;
+    text-transform: uppercase;
+    color: var(--danger);
+    margin-bottom: 16px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .eyebrow::before { content: ''; width: 24px; height: 1px; background: var(--danger); }
+  h1 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(34px, 4.8vw, 52px);
+    line-height: 1.05;
+    letter-spacing: -.03em;
+    margin-bottom: 16px;
+  }
+  h1 .accent  { color: var(--danger); }
+  h1 .accent2 { color: var(--info); }
+  .lead {
+    color: var(--text-2);
+    font-size: 17px;
+    max-width: 760px;
+    font-weight: 300;
+  }
+  .lead .term { color: var(--text); font-weight: 400; }
+
+  /* ---- Tabs ---- */
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+  .tab {
+    flex: 1 1 auto; min-width: 0;
+    padding: 12px 18px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .04em;
+    background: transparent;
+    color: var(--text-2);
+    border: 1px solid transparent;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: all .2s;
+    text-align: left;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .tab:hover { color: var(--text); background: var(--surface-2); }
+  .tab.active { background: var(--surface-3); color: var(--text); border-color: var(--border-bright); }
+  .tab-num {
+    font-size: 10px;
+    color: var(--text-3);
+    padding: 2px 6px;
+    background: var(--bg);
+    border-radius: 4px;
+  }
+  .tab.active .tab-num { background: var(--danger); color: var(--bg); }
+
+  /* ---- Main layout ---- */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+  @media (max-width: 980px) { .main { grid-template-columns: 1fr; } }
+
+  /* ---- Canvas ---- */
+  .canvas {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+    min-height: 640px;
+    position: relative;
+    overflow: hidden;
+  }
+  .canvas-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 22px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .canvas-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-2);
+    letter-spacing: .05em;
+  }
+  .canvas-title .label { color: var(--text); font-weight: 500; }
+  .scenario-status {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .status-dot {
+    width: 6px; height: 6px;
+    background: var(--text-3);
+    border-radius: 50%;
+    transition: all .3s;
+  }
+  .scenario-status.running .status-dot {
+    background: var(--danger);
+    box-shadow: 0 0 8px var(--danger-glow);
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 0%,100% {opacity:1} 50% {opacity:.4} }
+
+  .scenario { display: none; }
+  .scenario.active { display: block; }
+
+  /* =================================================================
+     SCENARIO 1: THE SPILL — executor memory overflow during shuffle
+     ================================================================= */
+  .spill-stage { display: flex; flex-direction: column; gap: 18px; }
+  .spill-query {
+    background: var(--surface-2);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text);
+  }
+  .spill-query .kw  { color: var(--shuffle); font-weight: 600; }
+  .spill-query .fn  { color: var(--data); }
+  .spill-query .col { color: var(--info); }
+  .spill-query .com { color: var(--text-3); font-style: italic; }
+
+  /* The executor "memory bar" — split into storage and execution regions */
+  .executor-panel {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+  }
+  .executor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 14px;
+  }
+  .executor-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .executor-config {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .04em;
+  }
+
+  /* Two-region memory bar */
+  .memory-bar {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 4px;
+    height: 64px;
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 4px;
+    position: relative;
+    margin-bottom: 10px;
+  }
+  .memory-region {
+    position: relative;
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--surface-3);
+  }
+  .memory-region-label {
+    position: absolute;
+    top: 4px; left: 6px;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    z-index: 2;
+    pointer-events: none;
+  }
+  .memory-region-cap {
+    position: absolute;
+    bottom: 4px; right: 6px;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-2);
+    z-index: 2;
+    pointer-events: none;
+  }
+  .memory-fill {
+    position: absolute;
+    bottom: 0; left: 0;
+    width: 100%;
+    height: 0%;
+    transition: height .25s ease-out;
+  }
+  .memory-region.storage .memory-fill { background: linear-gradient(0deg, var(--info), rgba(96,165,250,.5)); }
+  .memory-region.execution .memory-fill { background: linear-gradient(0deg, var(--executor), rgba(0,217,184,.5)); }
+  .memory-region.execution.overflowing .memory-fill {
+    background: linear-gradient(0deg, var(--danger), rgba(239,68,68,.6));
+  }
+  .memory-region.execution.overflowing {
+    box-shadow: inset 0 0 0 1px var(--danger), 0 0 12px var(--danger-glow);
+  }
+
+  /* Disk overflow area below */
+  .disk-area {
+    margin-top: 4px;
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 12px 14px;
+    border: 1px dashed var(--border-bright);
+    transition: all .3s;
+    min-height: 70px;
+  }
+  .disk-area.active {
+    border-color: var(--danger);
+    background: rgba(239,68,68,.04);
+  }
+  .disk-area-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+  .disk-area-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .disk-area.active .disk-area-title { color: var(--danger); }
+  .disk-spill-amount {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-2);
+    font-weight: 600;
+  }
+  .disk-area.active .disk-spill-amount { color: var(--danger); }
+  .disk-blocks {
+    display: grid;
+    grid-template-columns: repeat(24, 1fr);
+    gap: 2px;
+    height: 16px;
+  }
+  .disk-block {
+    background: var(--surface-3);
+    border-radius: 2px;
+    transition: all .2s;
+  }
+  .disk-block.filled {
+    background: var(--danger);
+    box-shadow: 0 0 3px var(--danger-glow);
+  }
+
+  /* Partition queue — incoming partitions arriving to the executor */
+  .partition-queue {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 0;
+  }
+  .partition-queue-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .partition-queue-title {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .partition-queue-progress {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .partitions {
+    display: grid;
+    grid-template-columns: repeat(20, 1fr);
+    gap: 3px;
+  }
+  .partition {
+    aspect-ratio: 1 / 1;
+    background: var(--surface-3);
+    border-radius: 3px;
+    position: relative;
+    transition: all .25s;
+    border: 1px solid transparent;
+  }
+  .partition.arriving {
+    background: var(--data);
+    box-shadow: 0 0 6px var(--data-glow);
+  }
+  .partition.in-memory {
+    background: var(--executor);
+  }
+  .partition.spilled {
+    background: var(--danger);
+    box-shadow: 0 0 4px var(--danger-glow);
+  }
+
+  /* Stats row */
+  .spill-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .spill-stat {
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 10px 12px;
+    text-align: center;
+  }
+  .spill-stat-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 3px;
+  }
+  .spill-stat-value {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .spill-stat-value.danger { color: var(--danger); }
+  .spill-stat-value.safe   { color: var(--result); }
+
+  /* =================================================================
+     SCENARIO 2: CACHE vs PERSIST — three lanes of the same pipeline
+     ================================================================= */
+  .cache-stage { display: flex; flex-direction: column; gap: 14px; }
+  .cache-code {
+    background: var(--surface-2);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .cache-code .kw  { color: var(--shuffle); font-weight: 600; }
+  .cache-code .fn  { color: var(--info); }
+  .cache-code .str { color: var(--result); }
+  .cache-code .com { color: var(--text-3); font-style: italic; }
+
+  .cache-lanes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+  @media (max-width: 900px) { .cache-lanes { grid-template-columns: 1fr; } }
+
+  .cache-lane {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .cache-lane.none   { border-left: 3px solid var(--text-3); }
+  .cache-lane.cache  { border-left: 3px solid var(--info); }
+  .cache-lane.persist{ border-left: 3px solid var(--data); }
+
+  .cache-lane-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .cache-lane-name {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .cache-lane.none .cache-lane-name    { color: var(--text-2); }
+  .cache-lane.cache .cache-lane-name   { color: var(--info); }
+  .cache-lane.persist .cache-lane-name { color: var(--data); }
+  .cache-lane-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .cache-lane-sub {
+    font-size: 10.5px;
+    color: var(--text-2);
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--border);
+    line-height: 1.4;
+  }
+
+  /* The three actions per lane — each is a "compute step" with timing */
+  .cache-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    margin-bottom: 10px;
+  }
+  .cache-action {
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 8px 10px;
+    position: relative;
+  }
+  .cache-action-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+    gap: 8px;
+    min-width: 0;
+  }
+  .cache-action-name {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-2);
+    letter-spacing: .03em;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1 1 auto;
+  }
+  .cache-action-time {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    flex: 0 0 auto;
+  }
+  .cache-action-bar {
+    height: 4px;
+    background: var(--surface-3);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .cache-action-fill {
+    height: 100%;
+    width: 0%;
+    transition: width .1s linear;
+    border-radius: 2px;
+  }
+  .cache-lane.none .cache-action-fill    { background: var(--text-3); }
+  .cache-lane.cache .cache-action-fill   { background: var(--info); }
+  .cache-lane.persist .cache-action-fill { background: var(--data); }
+  .cache-action.cached-hit .cache-action-fill { background: var(--result); }
+  .cache-action.partial-spill .cache-action-fill {
+    background: repeating-linear-gradient(45deg, var(--data), var(--data) 3px, rgba(255,200,87,.4) 3px, rgba(255,200,87,.4) 6px);
+  }
+  .cache-action-source {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+    margin-top: 4px;
+    letter-spacing: .03em;
+  }
+  .cache-action.cached-hit .cache-action-source { color: var(--result); }
+  .cache-action.partial-spill .cache-action-source { color: var(--data); }
+
+  .cache-lane-total {
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 10px 12px;
+    text-align: center;
+  }
+  .cache-lane-total-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    margin-bottom: 2px;
+  }
+  .cache-lane-total-value {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .cache-lane.none .cache-lane-total-value    { color: var(--text); }
+  .cache-lane.cache .cache-lane-total-value   { color: var(--info); }
+  .cache-lane.persist .cache-lane-total-value { color: var(--data); }
+
+  /* Toggle to switch DataFrame size (fits-in-memory vs too-big) */
+  .cache-size-toggle {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .cache-size-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .cache-size-buttons {
+    display: flex;
+    gap: 4px;
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 3px;
+  }
+  .cache-size-buttons button {
+    background: transparent;
+    border: none;
+    padding: 6px 12px;
+    color: var(--text-2);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all .15s;
+  }
+  .cache-size-buttons button.active {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+
+  /* =================================================================
+     SCENARIO 3: STORAGE LEVEL SANDBOX — pick a level, see how it stores
+     ================================================================= */
+  .sl-stage {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 18px;
+  }
+  @media (max-width: 820px) { .sl-stage { grid-template-columns: 1fr; } }
+
+  .sl-picker {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sl-picker-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .sl-option {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: all .15s;
+    text-align: left;
+  }
+  .sl-option:hover {
+    border-color: var(--border-bright);
+    background: var(--surface-3);
+  }
+  .sl-option.active {
+    border-color: var(--info);
+    background: rgba(96,165,250,.08);
+  }
+  .sl-option-name {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 2px;
+  }
+  .sl-option.active .sl-option-name { color: var(--info); }
+  .sl-option-desc {
+    font-size: 10px;
+    color: var(--text-3);
+    line-height: 1.3;
+  }
+
+  /* Workers view: 2 worker boxes, each showing 8 partitions distributed across memory/disk */
+  .sl-workers {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+  }
+  .sl-workers-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-3);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .sl-workers-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 600px) { .sl-workers-grid { grid-template-columns: 1fr; } }
+  .sl-worker {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .sl-worker-name {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-2);
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .sl-worker-section {
+    margin-bottom: 8px;
+  }
+  .sl-worker-section:last-child { margin-bottom: 0; }
+  .sl-worker-section-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .sl-blocks {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 3px;
+    min-height: 20px;
+  }
+  .sl-block {
+    aspect-ratio: 1.4 / 1;
+    background: var(--surface-3);
+    border-radius: 3px;
+    transition: all .3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 8px;
+    color: var(--text-3);
+    letter-spacing: .03em;
+  }
+  .sl-block.mem        { background: var(--info);     color: var(--bg); }
+  .sl-block.mem-ser    { background: rgba(96,165,250,.55); color: var(--bg); }
+  .sl-block.disk       { background: var(--data);     color: var(--bg); }
+  .sl-block.offheap    { background: var(--shuffle);  color: var(--bg); }
+  .sl-block.recompute  { background: var(--surface-3); color: var(--danger); border: 1px dashed var(--danger); }
+  .sl-block.replica    { box-shadow: 0 0 0 1.5px var(--executor) inset; }
+
+  .sl-traits {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .sl-trait-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .sl-trait-row:last-child { margin-bottom: 0; }
+  .sl-trait-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .04em;
+  }
+  .sl-trait-bar {
+    height: 6px;
+    background: var(--surface-3);
+    border-radius: 3px;
+    overflow: hidden;
+    display: flex;
+  }
+  .sl-trait-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width .35s ease-out;
+  }
+  .sl-trait-fill.speed     { background: var(--result); }
+  .sl-trait-fill.memory    { background: var(--info); }
+  .sl-trait-fill.cpu       { background: var(--warning); }
+  .sl-trait-fill.fault     { background: var(--executor); }
+
+  /* =================================================================
+     SCENARIO 4: UNPERSIST — long pipeline timeline, mem usage with/without
+     ================================================================= */
+  .unp-stage { display: flex; flex-direction: column; gap: 14px; }
+  .unp-code {
+    background: var(--surface-2);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .unp-code .kw  { color: var(--shuffle); font-weight: 600; }
+  .unp-code .fn  { color: var(--info); }
+  .unp-code .unp { color: var(--result); font-weight: 700; }
+  .unp-code .str { color: var(--result); }
+  .unp-code .com { color: var(--text-3); font-style: italic; }
+  .unp-code .danger { color: var(--danger); }
+
+  .unp-lanes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 720px) { .unp-lanes { grid-template-columns: 1fr; } }
+
+  .unp-lane {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .unp-lane.no-unp { border-left: 3px solid var(--danger); }
+  .unp-lane.with-unp { border-left: 3px solid var(--result); }
+  .unp-lane-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .unp-lane-name {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .unp-lane.no-unp   .unp-lane-name { color: var(--danger); }
+  .unp-lane.with-unp .unp-lane-name { color: var(--result); }
+  .unp-lane-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .unp-lane-sub {
+    font-size: 10.5px;
+    color: var(--text-2);
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed var(--border);
+    line-height: 1.4;
+  }
+
+  /* Timeline of steps */
+  .unp-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .unp-step {
+    display: grid;
+    grid-template-columns: 28px 1fr 60px;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 8px;
+    background: var(--bg);
+    border-radius: 5px;
+    opacity: .35;
+    transition: opacity .25s;
+  }
+  .unp-step.active   { opacity: 1; }
+  .unp-step.done     { opacity: .9; }
+  .unp-step-num {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    text-align: center;
+    background: var(--surface-3);
+    border-radius: 3px;
+    padding: 2px 0;
+  }
+  .unp-step.active .unp-step-num { background: var(--info); color: var(--bg); }
+  .unp-step.done .unp-step-num   { background: var(--result); color: var(--bg); }
+  .unp-step-text {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-2);
+  }
+  .unp-step.active .unp-step-text,
+  .unp-step.done .unp-step-text { color: var(--text); }
+  .unp-step-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+    text-align: right;
+  }
+  .unp-step.recompute .unp-step-tag { color: var(--danger); }
+  .unp-step.cached    .unp-step-tag { color: var(--info); }
+  .unp-step.unpersist .unp-step-tag { color: var(--result); }
+  .unp-step.evicted   .unp-step-tag { color: var(--warning); }
+
+  /* Memory usage bar over time */
+  .unp-memory {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .unp-memory-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-3);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .unp-memory-bar {
+    height: 22px;
+    background: var(--surface-3);
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+  }
+  .unp-memory-fill {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 0%;
+    transition: width .35s ease-out, background .25s;
+    border-radius: 4px;
+  }
+  .unp-memory-fill.normal   { background: linear-gradient(90deg, var(--info), rgba(96,165,250,.5)); }
+  .unp-memory-fill.crowded  { background: linear-gradient(90deg, var(--warning), rgba(251,191,36,.5)); }
+  .unp-memory-fill.overflow {
+    background: repeating-linear-gradient(45deg, var(--danger), var(--danger) 4px, rgba(239,68,68,.4) 4px, rgba(239,68,68,.4) 8px);
+  }
+  .unp-memory-marker {
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 1px;
+    background: var(--text-3);
+    opacity: .35;
+  }
+  .unp-memory-marker.cap {
+    background: var(--danger);
+    opacity: .6;
+  }
+  .unp-memory-cap-label {
+    position: absolute;
+    top: -14px; right: 0;
+    font-family: var(--mono);
+    font-size: 8px;
+    color: var(--danger);
+    letter-spacing: .04em;
+  }
+  .unp-memory-status {
+    font-family: var(--mono);
+    font-size: 10px;
+    margin-top: 6px;
+    color: var(--text-2);
+    min-height: 14px;
+  }
+
+  /* ---- Narration panel ---- */
+  .narration {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    min-height: 640px;
+  }
+  .narration-header { padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .narration-step {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--danger);
+    letter-spacing: .1em;
+    margin-bottom: 6px;
+  }
+  .narration-title {
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .narration-body {
+    flex: 1;
+    font-size: 14px;
+    color: var(--text-2);
+    margin-bottom: 20px;
+  }
+  .narration-body p { margin-bottom: 12px; }
+  .narration-body strong { color: var(--text); font-weight: 500; }
+  .narration-body code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--data);
+  }
+  .narration-body .danger { color: var(--danger); }
+  .narration-body .safe   { color: var(--result); }
+  .narration-body .info   { color: var(--info); }
+  .narration-body .data   { color: var(--data); }
+  .narration-key {
+    background: var(--surface-2);
+    border-left: 2px solid var(--danger);
+    padding: 12px 14px;
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+    color: var(--text-2);
+    margin-top: auto;
+  }
+  .narration-key strong {
+    color: var(--text);
+    display: block;
+    margin-bottom: 4px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+
+  /* ---- Controls ---- */
+  .controls {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    justify-content: space-between;
+    min-height: 70px;
+  }
+  .control-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .05em;
+    padding: 10px 16px;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all .15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--text-3); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: var(--bg);
+  }
+  .btn-primary:hover:not(:disabled) { background: #f15a5a; border-color: #f15a5a; }
+  .btn-primary:disabled { opacity: .5; background: var(--surface-2); border-color: var(--border-bright); color: var(--text-3); }
+
+  /* ---- Footer ---- */
+  .footnote {
+    margin-top: 32px;
+    padding: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-2);
+    font-size: 14px;
+  }
+  .footnote strong { color: var(--text); }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    letter-spacing: .05em;
+    margin-bottom: 12px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 8px; height: 8px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="eyebrow">Part 5 · Memory Management</div>
+    <h1>When RAM runs out: <span class="accent">spill</span>, <span class="accent2">cache</span>, persist, unpersist</h1>
+    <p class="lead">
+      Spark's first instinct is always to keep data in memory. When it can't, three things happen — none of which kill the job, but all of which can quietly destroy performance. This page walks through <span class="term">spill</span> (when execution runs out of RAM), <span class="term">cache and persist</span> (when you explicitly choose to keep data around), and <span class="term">unpersist</span> (when you need to take it back).
+    </p>
+  </header>
+
+  <div class="tabs" role="tablist" id="tabs">
+    <button class="tab active" data-scenario="spill">
+      <span class="tab-num">01</span> The Spill
+    </button>
+    <button class="tab" data-scenario="cache">
+      <span class="tab-num">02</span> Cache vs Persist
+    </button>
+    <button class="tab" data-scenario="storage-level">
+      <span class="tab-num">03</span> Storage Levels
+    </button>
+    <button class="tab" data-scenario="unpersist">
+      <span class="tab-num">04</span> The Unpersist Pattern
+    </button>
+  </div>
+
+  <div class="main">
+    <div class="canvas" id="canvas">
+      <div class="canvas-header">
+        <div class="canvas-title">
+          <span class="label" id="scenarioTitle">The Spill</span>
+          <span style="margin:0 8px;color:var(--text-3)">·</span>
+          <span id="scenarioSubtitle">Execution memory overflows during a shuffle</span>
+        </div>
+        <div class="scenario-status" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span id="statusText">idle</span>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 1: THE SPILL =============== -->
+      <div class="scenario active" id="scenario-spill">
+        <div class="spill-stage">
+          <div class="spill-query">
+<span class="kw">SELECT</span> customer_id, <span class="fn">COUNT</span>(*) <span class="kw">AS</span> orders
+<span class="kw">FROM</span> orders
+<span class="kw">GROUP BY</span> customer_id   <span class="com">-- 20 partitions, lots of shuffle</span>
+          </div>
+
+          <div class="partition-queue">
+            <div class="partition-queue-header">
+              <div class="partition-queue-title">Shuffle partitions arriving at executor</div>
+              <div class="partition-queue-progress" id="partitionProgress">0 / 20 received</div>
+            </div>
+            <div class="partitions" id="partitionsGrid"></div>
+          </div>
+
+          <div class="executor-panel">
+            <div class="executor-header">
+              <div class="executor-title">▤ Executor memory · 1 GB heap</div>
+              <div class="executor-config">spark.memory.fraction = 0.6 · spark.memory.storageFraction = 0.5</div>
+            </div>
+            <div class="memory-bar">
+              <div class="memory-region storage">
+                <div class="memory-region-label">Storage</div>
+                <div class="memory-region-cap">300 MB</div>
+                <div class="memory-fill" id="storageFill"></div>
+              </div>
+              <div class="memory-region execution" id="executionRegion">
+                <div class="memory-region-label">Execution</div>
+                <div class="memory-region-cap">600 MB</div>
+                <div class="memory-fill" id="executionFill"></div>
+              </div>
+            </div>
+            <div class="disk-area" id="diskArea">
+              <div class="disk-area-header">
+                <div class="disk-area-title">📁 Local disk · spill (disk)</div>
+                <div class="disk-spill-amount" id="diskSpillAmount">0 MB</div>
+              </div>
+              <div class="disk-blocks" id="diskBlocks"></div>
+            </div>
+            <div class="spill-stats">
+              <div class="spill-stat">
+                <div class="spill-stat-label">Exec memory used</div>
+                <div class="spill-stat-value" id="statExec">0 MB</div>
+              </div>
+              <div class="spill-stat">
+                <div class="spill-stat-label">Spill (memory)</div>
+                <div class="spill-stat-value" id="statSpillMem">0 MB</div>
+              </div>
+              <div class="spill-stat">
+                <div class="spill-stat-label">Spill (disk)</div>
+                <div class="spill-stat-value danger" id="statSpillDisk">0 MB</div>
+              </div>
+              <div class="spill-stat">
+                <div class="spill-stat-label">Task duration</div>
+                <div class="spill-stat-value" id="statDuration">0.0s</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 2: CACHE vs PERSIST =============== -->
+      <div class="scenario" id="scenario-cache">
+        <div class="cache-stage">
+          <div class="cache-code">
+<span class="com"># Pipeline: same DataFrame used three times</span>
+<span class="kw">val</span> orders = spark.<span class="fn">read</span>.<span class="fn">parquet</span>(<span class="str">"s3://lake/orders/"</span>)
+                    .<span class="fn">filter</span>(<span class="str">"year = 2025"</span>)
+                    .<span class="fn">join</span>(customers, <span class="str">"customer_id"</span>)
+<span class="com"># Three downstream actions all need orders:</span>
+orders.<span class="fn">groupBy</span>(<span class="str">"region"</span>).<span class="fn">sum</span>().<span class="fn">show</span>()      <span class="com"># action 1</span>
+orders.<span class="fn">groupBy</span>(<span class="str">"product"</span>).<span class="fn">avg</span>().<span class="fn">show</span>()     <span class="com"># action 2</span>
+orders.<span class="fn">filter</span>(<span class="str">"amount > 1000"</span>).<span class="fn">count</span>()       <span class="com"># action 3</span>
+          </div>
+
+          <div class="cache-size-toggle">
+            <div class="cache-size-label">DataFrame size:</div>
+            <div class="cache-size-buttons">
+              <button data-size="fits"     id="sizeFits" class="active">Fits in memory (1.5 GB)</button>
+              <button data-size="too-big"  id="sizeTooBig">Too big (4 GB / 2 GB cache room)</button>
+            </div>
+          </div>
+
+          <div class="cache-lanes">
+            <div class="cache-lane none">
+              <div class="cache-lane-header">
+                <div class="cache-lane-name">▤ No cache</div>
+                <div class="cache-lane-tag">recompute every time</div>
+              </div>
+              <div class="cache-lane-sub">Each action triggers a full re-scan of S3 + filter + join.</div>
+              <div class="cache-actions" id="laneNoneActions"></div>
+              <div class="cache-lane-total">
+                <div class="cache-lane-total-label">Total wall time</div>
+                <div class="cache-lane-total-value" id="totalNone">—</div>
+              </div>
+            </div>
+
+            <div class="cache-lane cache">
+              <div class="cache-lane-header">
+                <div class="cache-lane-name">⚡ .cache()</div>
+                <div class="cache-lane-tag">MEMORY_AND_DISK</div>
+              </div>
+              <div class="cache-lane-sub">Shorthand for <code style="font-family:var(--mono);font-size:10px;color:var(--data)">.persist(MEMORY_AND_DISK)</code>. First action stores blocks; later actions hit cache.</div>
+              <div class="cache-actions" id="laneCacheActions"></div>
+              <div class="cache-lane-total">
+                <div class="cache-lane-total-label">Total wall time</div>
+                <div class="cache-lane-total-value" id="totalCache">—</div>
+              </div>
+            </div>
+
+            <div class="cache-lane persist">
+              <div class="cache-lane-header">
+                <div class="cache-lane-name">⚙ .persist()</div>
+                <div class="cache-lane-tag">explicit level</div>
+              </div>
+              <div class="cache-lane-sub">Same default level but you can pick. Same speed as cache; the value is in non-default levels.</div>
+              <div class="cache-actions" id="lanePersistActions"></div>
+              <div class="cache-lane-total">
+                <div class="cache-lane-total-label">Total wall time</div>
+                <div class="cache-lane-total-value" id="totalPersist">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 3: STORAGE LEVELS =============== -->
+      <div class="scenario" id="scenario-storage-level">
+        <div class="sl-stage">
+          <div class="sl-picker">
+            <div class="sl-picker-title">Pick a storage level</div>
+            <button class="sl-option active" data-level="MEMORY_ONLY">
+              <div class="sl-option-name">MEMORY_ONLY</div>
+              <div class="sl-option-desc">RAM only, deserialized. Drops partitions if full.</div>
+            </button>
+            <button class="sl-option" data-level="MEMORY_ONLY_SER">
+              <div class="sl-option-name">MEMORY_ONLY_SER</div>
+              <div class="sl-option-desc">RAM only, serialized. Smaller, but CPU to deserialize.</div>
+            </button>
+            <button class="sl-option" data-level="MEMORY_AND_DISK">
+              <div class="sl-option-name">MEMORY_AND_DISK</div>
+              <div class="sl-option-desc">RAM first, spills to disk when full. <strong>.cache() default for DataFrames.</strong></div>
+            </button>
+            <button class="sl-option" data-level="MEMORY_AND_DISK_SER">
+              <div class="sl-option-name">MEMORY_AND_DISK_SER</div>
+              <div class="sl-option-desc">Same as above, serialized. Trade CPU for memory.</div>
+            </button>
+            <button class="sl-option" data-level="DISK_ONLY">
+              <div class="sl-option-name">DISK_ONLY</div>
+              <div class="sl-option-desc">All to disk. No RAM pressure, but slow reads.</div>
+            </button>
+            <button class="sl-option" data-level="MEMORY_AND_DISK_2">
+              <div class="sl-option-name">MEMORY_AND_DISK_2</div>
+              <div class="sl-option-desc">Same as above, each partition copied to 2 nodes.</div>
+            </button>
+            <button class="sl-option" data-level="OFF_HEAP">
+              <div class="sl-option-name">OFF_HEAP</div>
+              <div class="sl-option-desc">Outside the JVM heap. Avoids GC pressure.</div>
+            </button>
+          </div>
+
+          <div class="sl-workers">
+            <div class="sl-workers-title">8-partition DataFrame across 2 workers · 256 MB each worker can hold in RAM</div>
+            <div class="sl-workers-grid">
+              <div class="sl-worker">
+                <div class="sl-worker-name"><span>worker_01</span><span style="color:var(--text-3)" id="w1Summary">—</span></div>
+                <div class="sl-worker-section">
+                  <div class="sl-worker-section-label">RAM</div>
+                  <div class="sl-blocks" id="w1Mem"></div>
+                </div>
+                <div class="sl-worker-section">
+                  <div class="sl-worker-section-label">Local disk</div>
+                  <div class="sl-blocks" id="w1Disk"></div>
+                </div>
+              </div>
+              <div class="sl-worker">
+                <div class="sl-worker-name"><span>worker_02</span><span style="color:var(--text-3)" id="w2Summary">—</span></div>
+                <div class="sl-worker-section">
+                  <div class="sl-worker-section-label">RAM</div>
+                  <div class="sl-blocks" id="w2Mem"></div>
+                </div>
+                <div class="sl-worker-section">
+                  <div class="sl-worker-section-label">Local disk</div>
+                  <div class="sl-blocks" id="w2Disk"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="sl-traits">
+              <div class="sl-trait-row">
+                <div class="sl-trait-label">Read speed</div>
+                <div class="sl-trait-bar"><div class="sl-trait-fill speed" id="traitSpeed"></div></div>
+              </div>
+              <div class="sl-trait-row">
+                <div class="sl-trait-label">RAM used</div>
+                <div class="sl-trait-bar"><div class="sl-trait-fill memory" id="traitMemory"></div></div>
+              </div>
+              <div class="sl-trait-row">
+                <div class="sl-trait-label">CPU cost (ser/deser)</div>
+                <div class="sl-trait-bar"><div class="sl-trait-fill cpu" id="traitCpu"></div></div>
+              </div>
+              <div class="sl-trait-row">
+                <div class="sl-trait-label">Fault tolerance</div>
+                <div class="sl-trait-bar"><div class="sl-trait-fill fault" id="traitFault"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- =============== SCENARIO 4: THE UNPERSIST PATTERN =============== -->
+      <div class="scenario" id="scenario-unpersist">
+        <div class="unp-stage">
+          <div class="unp-code">
+<span class="com"># A long pipeline with two cached intermediates</span>
+<span class="kw">val</span> df1 = spark.<span class="fn">read</span>.<span class="fn">parquet</span>(...).<span class="fn">filter</span>(...).<span class="fn">cache</span>()
+df1.<span class="fn">count</span>()                          <span class="com"># materialize cache</span>
+
+<span class="kw">val</span> df2 = df1.<span class="fn">groupBy</span>(...).<span class="fn">agg</span>(...)   <span class="com"># uses df1</span>
+<span class="kw">val</span> df3 = df1.<span class="fn">join</span>(other, ...)         <span class="com"># uses df1 again</span>
+df2.<span class="fn">write</span>.<span class="fn">parquet</span>(...)
+df3.<span class="fn">write</span>.<span class="fn">parquet</span>(...)
+
+<span class="com"># df1 done. Now we build df4 from a different source.</span>
+<span class="unp">df1.unpersist()</span>                       <span class="com"># ← the key call</span>
+
+<span class="kw">val</span> df4 = spark.<span class="fn">read</span>.<span class="fn">parquet</span>(...).<span class="fn">cache</span>()
+df4.<span class="fn">count</span>()
+df4.<span class="fn">join</span>(otherBig).<span class="fn">write</span>.<span class="fn">parquet</span>(...)
+          </div>
+
+          <div class="unp-lanes">
+            <div class="unp-lane no-unp">
+              <div class="unp-lane-header">
+                <div class="unp-lane-name">▤ Without unpersist</div>
+                <div class="unp-lane-tag">df1 stays cached forever</div>
+              </div>
+              <div class="unp-lane-sub">df1 keeps holding storage memory long after the pipeline is done with it. When df4 needs to cache, Spark must evict.</div>
+              <div class="unp-timeline" id="noUnpTimeline"></div>
+              <div class="unp-memory">
+                <div class="unp-memory-label">
+                  <span>Storage memory usage</span>
+                  <span id="noUnpMemPct">0%</span>
+                </div>
+                <div class="unp-memory-bar">
+                  <div class="unp-memory-fill normal" id="noUnpMemFill"></div>
+                  <div class="unp-memory-marker cap" style="left: 85%"></div>
+                  <div class="unp-memory-cap-label" style="right: 12%">cap</div>
+                </div>
+                <div class="unp-memory-status" id="noUnpMemStatus">—</div>
+              </div>
+            </div>
+
+            <div class="unp-lane with-unp">
+              <div class="unp-lane-header">
+                <div class="unp-lane-name">⚡ With unpersist</div>
+                <div class="unp-lane-tag">explicit cleanup</div>
+              </div>
+              <div class="unp-lane-sub">df1 is unpersisted as soon as it's no longer needed. Storage memory is free for df4 — no eviction, no recompute risk.</div>
+              <div class="unp-timeline" id="withUnpTimeline"></div>
+              <div class="unp-memory">
+                <div class="unp-memory-label">
+                  <span>Storage memory usage</span>
+                  <span id="withUnpMemPct">0%</span>
+                </div>
+                <div class="unp-memory-bar">
+                  <div class="unp-memory-fill normal" id="withUnpMemFill"></div>
+                  <div class="unp-memory-marker cap" style="left: 85%"></div>
+                  <div class="unp-memory-cap-label" style="right: 12%">cap</div>
+                </div>
+                <div class="unp-memory-status" id="withUnpMemStatus">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Narration panel -->
+    <div class="narration">
+      <div class="narration-header">
+        <div class="narration-step" id="narrStep">SCENARIO · 01</div>
+        <div class="narration-title" id="narrTitle">When the shuffle outgrows the heap</div>
+      </div>
+      <div class="narration-body" id="narrBody">
+        <p>Every Spark executor has a fixed amount of memory, split into two regions: <strong>storage</strong> (for cached data) and <strong>execution</strong> (for shuffles, joins, sorts, aggregations).</p>
+        <p>When a wide operation like <code>groupBy</code> needs more execution memory than the region holds, Spark doesn't crash. It <strong>spills</strong> the excess to local disk and keeps going.</p>
+        <p>Click <strong>Run query</strong> to watch a <code>GROUP BY</code> exceed the executor's execution region and start spilling.</p>
+      </div>
+      <div class="narration-key" id="narrKey">
+        <strong>The key idea</strong>
+        Spill never kills the job — it just makes it slower. Disk is ~250× slower than RAM (Part 0 established that). So spill-heavy queries finish, but they finish at disk speed instead of memory speed.
+      </div>
+    </div>
+  </div>
+
+  <div class="controls" id="controls"></div>
+
+  <div class="footnote">
+    <div class="legend">
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--info)"></span>In memory</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--executor)"></span>Execution</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--data)"></span>Spilled / disk</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--danger)"></span>Spilling / over cap</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--shuffle)"></span>Off-heap</div>
+      <div class="legend-item"><span class="legend-swatch" style="background: var(--result)"></span>Cache hit / unpersist</div>
+    </div>
+    <strong>Why this matters:</strong> Memory is the difference between a fast Spark job and a slow one. <em>Spill</em> is what happens when execution outgrows the heap — it's automatic, it's safe, and it's silently expensive. <em>cache / persist</em> let you keep a DataFrame in memory across multiple actions so you don't re-scan storage on every reuse. <em>unpersist</em> is how you take memory back when you're done — without it, cached DataFrames sit around eating storage memory and forcing LRU eviction of more useful data. Every long Databricks notebook should be auditing <em>both</em> what gets cached and when it gets released.
+  </div>
+
+</div>
+
+<script>
+// =====================================================================
+// State
+// =====================================================================
+const STATE = {
+  scenario: 'spill',
+
+  // 1. Spill
+  spillRunning: false,
+  spillAbort: false,
+
+  // 2. Cache vs Persist
+  cacheRunning: false,
+  cacheAbort: false,
+  cacheSize: 'fits',  // 'fits' | 'too-big'
+
+  // 3. Storage Level
+  slLevel: 'MEMORY_ONLY',
+
+  // 4. Unpersist
+  unpRunning: false,
+  unpAbort: false,
+};
+
+const $ = id => document.getElementById(id);
+
+function setStatus(text, mode='idle') {
+  $('statusText').textContent = text;
+  $('statusIndicator').classList.toggle('running', mode === 'running');
+}
+
+function setNarration({step, title, body, key}) {
+  $('narrStep').textContent = step;
+  $('narrTitle').textContent = title;
+  $('narrBody').innerHTML = body;
+  if (key) {
+    $('narrKey').innerHTML = `<strong>${key.title}</strong>${key.body}`;
+    $('narrKey').style.display = '';
+  } else {
+    $('narrKey').style.display = 'none';
+  }
+}
+
+const sleep = ms => new Promise(r => {
+  const t = setTimeout(r, ms);
+  const i = setInterval(() => {
+    if (STATE.spillAbort || STATE.cacheAbort || STATE.unpAbort) {
+      clearTimeout(t); clearInterval(i); r();
+    }
+  }, 40);
+});
+
+// =====================================================================
+// SCENARIO 1: THE SPILL
+// =====================================================================
+
+const SPILL_PARTITION_COUNT = 20;
+const SPILL_PARTITION_MB = 50;       // each partition is 50 MB of shuffle data
+const EXECUTION_CAP_MB = 600;        // execution region capacity (60% × 1GB heap)
+
+function renderSpillInitial() {
+  const grid = $('partitionsGrid');
+  grid.innerHTML = '';
+  for (let i = 0; i < SPILL_PARTITION_COUNT; i++) {
+    const p = document.createElement('div');
+    p.className = 'partition';
+    grid.appendChild(p);
+  }
+
+  const diskGrid = $('diskBlocks');
+  diskGrid.innerHTML = '';
+  for (let i = 0; i < 24; i++) {
+    const b = document.createElement('div');
+    b.className = 'disk-block';
+    diskGrid.appendChild(b);
+  }
+
+  $('partitionProgress').textContent = `0 / ${SPILL_PARTITION_COUNT} received`;
+  $('storageFill').style.height = '40%';   // some cached data already there
+  $('executionFill').style.height = '0%';
+  $('executionRegion').classList.remove('overflowing');
+  $('diskArea').classList.remove('active');
+  $('diskSpillAmount').textContent = '0 MB';
+  $('statExec').textContent      = '0 MB';
+  $('statSpillMem').textContent  = '0 MB';
+  $('statSpillDisk').textContent = '0 MB';
+  $('statDuration').textContent  = '0.0s';
+}
+
+async function runSpill() {
+  if (STATE.spillRunning) return;
+  STATE.spillRunning = true;
+  STATE.spillAbort = false;
+  setStatus('running', 'running');
+  renderSpillInitial();
+
+  const parts  = $('partitionsGrid').children;
+  const disk   = $('diskBlocks').children;
+  const cycleMs = 280;
+  const startTime = performance.now();
+
+  let memMB = 0;
+  let spillMemMB = 0;
+  let spillDiskMB = 0;
+
+  for (let i = 0; i < SPILL_PARTITION_COUNT; i++) {
+    if (STATE.spillAbort) break;
+
+    // Partition arrives
+    parts[i].classList.add('arriving');
+    await sleep(cycleMs * 0.4);
+    if (STATE.spillAbort) break;
+    parts[i].classList.remove('arriving');
+
+    const incomingMB = SPILL_PARTITION_MB;
+
+    if (memMB + incomingMB <= EXECUTION_CAP_MB) {
+      // Fits in execution memory
+      memMB += incomingMB;
+      parts[i].classList.add('in-memory');
+      $('executionFill').style.height = ((memMB / EXECUTION_CAP_MB) * 100) + '%';
+    } else {
+      // Execution full — must spill this partition's worth to disk.
+      // Spill (Memory) = size as it sat in memory (deserialized form)
+      // Spill (Disk)   = serialized size written to disk (smaller, ~50%)
+      $('executionRegion').classList.add('overflowing');
+      $('diskArea').classList.add('active');
+      parts[i].classList.add('spilled');
+
+      spillMemMB += incomingMB;
+      spillDiskMB += Math.round(incomingMB * 0.5);  // serialization saves ~50%
+
+      // Light up disk blocks proportionally — 24 blocks represent the disk
+      const blocksToFill = Math.min(24, Math.round((spillDiskMB / 350) * 24));
+      for (let b = 0; b < blocksToFill; b++) disk[b].classList.add('filled');
+    }
+
+    $('partitionProgress').textContent = `${i+1} / ${SPILL_PARTITION_COUNT} received`;
+    $('statExec').textContent      = memMB + ' MB';
+    $('statSpillMem').textContent  = spillMemMB + ' MB';
+    $('statSpillDisk').textContent = spillDiskMB + ' MB';
+    $('statSpillMem').className    = 'spill-stat-value' + (spillMemMB > 0 ? ' danger' : '');
+    $('diskSpillAmount').textContent = spillDiskMB + ' MB';
+
+    // Time penalty: pre-spill partitions are quick, spilled ones are slow
+    const elapsed = (performance.now() - startTime) / 1000;
+    $('statDuration').textContent = elapsed.toFixed(1) + 's';
+
+    // Slower cycle for spilled partitions (disk write is expensive)
+    await sleep(memMB >= EXECUTION_CAP_MB ? cycleMs * 1.0 : cycleMs * 0.4);
+  }
+
+  STATE.spillRunning = false;
+  if (STATE.spillAbort) {
+    setStatus('idle', 'idle');
+    return;
+  }
+  setStatus('done', 'idle');
+
+  const finalTime = ((performance.now() - startTime) / 1000).toFixed(1);
+  if (spillDiskMB > 0) {
+    setNarration({
+      step: 'SCENARIO · 01 · SPILL OCCURRED',
+      title: `Spilled ${spillDiskMB} MB to disk — job finished, just slower`,
+      body: `<p>Twenty 50 MB partitions arrived but execution memory only holds 600 MB. The first 12 fit. The remaining 8 (400 MB of shuffle data) wouldn't fit — Spark serialized them and wrote them to local disk.</p>
+             <p>Spark UI shows two values: <code>Spill (Memory) = ${spillMemMB} MB</code> (the size the data took up in memory before being kicked out) and <code>Spill (Disk) = ${spillDiskMB} MB</code> (the serialized bytes actually written). These two values are <em>always</em> reported together.</p>
+             <p>Job took <strong>${finalTime}s</strong>. The spilled partitions each cost roughly 2.5× the time of in-memory partitions because of the disk write penalty.</p>`,
+      key: { title: 'How to fix it', body: 'More executor memory (bigger node), more partitions (smaller per-partition data), better partitioning (avoid skew), or a different join strategy (broadcast instead of shuffle). Spill is a signal, not an error.' }
+    });
+  }
+}
+
+function resetSpill() {
+  STATE.spillAbort = true;
+  STATE.spillRunning = false;
+  renderSpillInitial();
+  setStatus('idle', 'idle');
+  setNarrationForScenario('spill');
+}
+
+// =====================================================================
+// SCENARIO 2: CACHE vs PERSIST
+// =====================================================================
+// Three lanes (none / cache / persist) × three actions per lane.
+// We use the same compute model in all three: action 1 is always the
+// "full pipeline" (~2000ms). Actions 2 and 3 differ by lane:
+//   - none: full recompute each time → 2000ms × 3 = 6000ms
+//   - cache (fits): hit cache → 200ms each → 2000 + 200 + 200 = 2400ms
+//   - cache (too-big): partial fit, some recompute/spill → 800ms each
+//   - persist: identical to cache for the default level
+
+const CACHE_ACTIONS = [
+  { name: 'orders.groupBy("region").sum()',     source: '' },
+  { name: 'orders.groupBy("product").avg()',    source: '' },
+  { name: 'orders.filter("amount>1000").count()',source: '' },
+];
+
+function timingsForLane(lane, size) {
+  const FULL = 2000;            // full pipeline ms
+  const HIT_FAST = 220;         // pure cache hit
+  const HIT_PARTIAL = 900;      // partial spill / partial recompute
+  if (lane === 'none') {
+    return [
+      { ms: FULL, source: 'recompute from S3' },
+      { ms: FULL, source: 'recompute from S3' },
+      { ms: FULL, source: 'recompute from S3' },
+    ];
+  }
+  // cache + persist behave identically with the default level
+  if (size === 'fits') {
+    return [
+      { ms: FULL,     source: 'first action — populates cache' },
+      { ms: HIT_FAST, source: 'cache hit — all in memory' },
+      { ms: HIT_FAST, source: 'cache hit — all in memory' },
+    ];
+  } else {
+    // too-big: some partitions in memory, some on disk
+    return [
+      { ms: FULL,        source: 'first action — fills cache, spills overflow' },
+      { ms: HIT_PARTIAL, source: 'partial cache hit — disk reads for overflow' },
+      { ms: HIT_PARTIAL, source: 'partial cache hit — disk reads for overflow' },
+    ];
+  }
+}
+
+function renderCacheLanes() {
+  ['laneNoneActions', 'laneCacheActions', 'lanePersistActions'].forEach(id => {
+    const c = $(id);
+    c.innerHTML = '';
+    CACHE_ACTIONS.forEach((a, idx) => {
+      const row = document.createElement('div');
+      row.className = 'cache-action';
+      row.dataset.idx = idx;
+      row.innerHTML = `
+        <div class="cache-action-header">
+          <div class="cache-action-name">${idx+1}. ${a.name}</div>
+          <div class="cache-action-time">—</div>
+        </div>
+        <div class="cache-action-bar"><div class="cache-action-fill"></div></div>
+        <div class="cache-action-source">—</div>
+      `;
+      c.appendChild(row);
+    });
+  });
+  ['totalNone', 'totalCache', 'totalPersist'].forEach(id => {
+    $(id).textContent = '—';
+  });
+}
+
+async function runCacheLanes() {
+  if (STATE.cacheRunning) return;
+  STATE.cacheRunning = true;
+  STATE.cacheAbort = false;
+  setStatus('running', 'running');
+  renderCacheLanes();
+  await sleep(80);
+
+  const lanes = [
+    { laneId: 'none',    actionsId: 'laneNoneActions',    totalId: 'totalNone',    timings: timingsForLane('none',    STATE.cacheSize) },
+    { laneId: 'cache',   actionsId: 'laneCacheActions',   totalId: 'totalCache',   timings: timingsForLane('cache',   STATE.cacheSize) },
+    { laneId: 'persist', actionsId: 'lanePersistActions', totalId: 'totalPersist', timings: timingsForLane('persist', STATE.cacheSize) },
+  ];
+
+  // Each lane runs its 3 actions sequentially. All three lanes run in parallel for visual race.
+  // To keep visible animation reasonable we compress real-time by 1/3.
+  const speedFactor = 0.3;
+
+  const runLane = async (lane) => {
+    const rows = $(lane.actionsId).children;
+    let total = 0;
+    for (let i = 0; i < lane.timings.length; i++) {
+      if (STATE.cacheAbort) return;
+      const t = lane.timings[i];
+      const row = rows[i];
+      const fill = row.querySelector('.cache-action-fill');
+      const timeEl = row.querySelector('.cache-action-time');
+      const sourceEl = row.querySelector('.cache-action-source');
+
+      // Tag the row for special styling (cache hit vs partial spill)
+      row.classList.remove('cached-hit', 'partial-spill');
+      if (lane.laneId !== 'none' && i > 0) {
+        if (STATE.cacheSize === 'fits')   row.classList.add('cached-hit');
+        else                               row.classList.add('partial-spill');
+      }
+      sourceEl.textContent = t.source;
+
+      const durationMs = t.ms * speedFactor;
+      const start = performance.now();
+      while (!STATE.cacheAbort) {
+        const elapsed = performance.now() - start;
+        const pct = Math.min(100, (elapsed / durationMs) * 100);
+        fill.style.width = pct + '%';
+        timeEl.textContent = Math.round((elapsed / speedFactor)) + ' ms';
+        if (pct >= 100) {
+          fill.style.width = '100%';
+          timeEl.textContent = t.ms + ' ms';
+          total += t.ms;
+          $(lane.totalId).textContent = (total / 1000).toFixed(2) + ' s';
+          break;
+        }
+        await sleep(30);
+      }
+    }
+  };
+
+  await Promise.all(lanes.map(runLane));
+
+  STATE.cacheRunning = false;
+  if (STATE.cacheAbort) {
+    setStatus('idle', 'idle');
+    return;
+  }
+  setStatus('done', 'idle');
+
+  const noneTotal    = lanes[0].timings.reduce((a,b) => a + b.ms, 0);
+  const cacheTotal   = lanes[1].timings.reduce((a,b) => a + b.ms, 0);
+  const speedup      = (noneTotal / cacheTotal).toFixed(1);
+
+  if (STATE.cacheSize === 'fits') {
+    setNarration({
+      step: 'SCENARIO · 02 · FITS · COMPLETE',
+      title: `Cache won by ${speedup}× — same DataFrame, three uses`,
+      body: `<p>No cache: <strong>${(noneTotal/1000).toFixed(2)}s</strong>. Every action re-scans S3, re-runs the filter, re-runs the join. That's 2 seconds of waste per reuse.</p>
+             <p>With <code>.cache()</code>: <strong>${(cacheTotal/1000).toFixed(2)}s</strong>. The first action takes the full 2 seconds to populate the cache; the next two are nearly instant because the DataFrame is already in RAM on every executor.</p>
+             <p><code>.persist()</code> with no argument is <em>identical</em> to <code>.cache()</code>. The only reason to use <code>persist()</code> is when you want a <span class="info">non-default storage level</span> — try the Storage Levels tab next.</p>`,
+      key: { title: 'Caching is lazy', body: 'Calling <code>.cache()</code> does <em>nothing</em> by itself. The data only enters the cache when the first action triggers computation. That\'s why pipelines often follow <code>.cache()</code> with a <code>.count()</code> — to force materialization before the real work begins.' }
+    });
+  } else {
+    setNarration({
+      step: 'SCENARIO · 02 · TOO BIG · COMPLETE',
+      title: `Cache still won (${speedup}×) — but disk reads cost some of it`,
+      body: `<p>The DataFrame is 4 GB but the cluster's storage memory can only hold 2 GB of it. With <code>.cache()</code> (which is <code>MEMORY_AND_DISK</code>), half the partitions go to RAM, half spill to local disk.</p>
+             <p>Reads on cache hits are still fast (<strong>~900ms per action</strong> vs <strong>2000ms without cache</strong>) but slower than the fits-in-memory case, because half the partitions come from disk on each action.</p>
+             <p>If you had used <code>persist(MEMORY_ONLY)</code> instead, Spark would have dropped the overflow partitions and <em>recomputed them every time</em> — usually worse. That's why DataFrame <code>.cache()</code> defaults to <code>MEMORY_AND_DISK</code>.</p>`,
+      key: { title: 'The default is wise', body: 'For DataFrames, <code>.cache() = persist(MEMORY_AND_DISK)</code>. The disk fallback ensures you never lose blocks to memory pressure. The cost is some disk I/O on cache hits — but disk I/O beats recomputing a join.' }
+    });
+  }
+}
+
+function resetCacheLanes() {
+  STATE.cacheAbort = true;
+  STATE.cacheRunning = false;
+  renderCacheLanes();
+  setStatus('idle', 'idle');
+  setNarrationForScenario('cache');
+}
+
+function setCacheSize(size) {
+  STATE.cacheSize = size;
+  $('sizeFits').classList.toggle('active',    size === 'fits');
+  $('sizeTooBig').classList.toggle('active',  size === 'too-big');
+  resetCacheLanes();
+}
+
+// =====================================================================
+// SCENARIO 3: STORAGE LEVELS
+// =====================================================================
+
+// For each storage level, define how 8 partitions get distributed across
+// 2 workers (RAM vs disk vs replicated). Each worker can hold 4 partitions
+// in RAM (= 256 MB) and unlimited on disk.
+//
+// 8 partitions × 64 MB = 512 MB total. Each worker gets 4 partitions
+// initially. With the deserialized RAM cap at 256 MB / 64 MB = 4 partitions,
+// all four fit in MEMORY_ONLY (no overflow). MEMORY_ONLY_SER halves the
+// memory cost, so 4 serialized partitions take 128 MB.
+
+const SL_PROFILES = {
+  MEMORY_ONLY: {
+    desc: 'All partitions in RAM as live Java objects. Fast reads, but if memory fills, overflow partitions are dropped — and recomputed on demand.',
+    w1: { mem: ['p1', 'p2', 'p3', 'p4'], disk: [], recompute: [] },
+    w2: { mem: ['p5', 'p6', 'p7', 'p8'], disk: [], recompute: [] },
+    blockType: 'mem',
+    traits: { speed: 100, memory: 100, cpu: 10,  fault: 20 },
+    riskNote: ''
+  },
+  MEMORY_ONLY_SER: {
+    desc: 'In RAM, but compressed/serialized. Roughly half the memory footprint, but every read pays the deserialization cost.',
+    w1: { mem: ['p1', 'p2', 'p3', 'p4'], disk: [], recompute: [], serialized: true },
+    w2: { mem: ['p5', 'p6', 'p7', 'p8'], disk: [], recompute: [], serialized: true },
+    blockType: 'mem-ser',
+    traits: { speed: 75, memory: 50, cpu: 70,  fault: 20 },
+    riskNote: ''
+  },
+  MEMORY_AND_DISK: {
+    desc: 'RAM first, spills to disk if memory fills. The default for DataFrame .cache(). Cache hits are fast in RAM, slower from disk, but always safe.',
+    // Assume slight memory pressure so 1 partition per worker ends up on disk
+    w1: { mem: ['p1', 'p2', 'p3'], disk: ['p4'], recompute: [] },
+    w2: { mem: ['p5', 'p6', 'p7'], disk: ['p8'], recompute: [] },
+    blockType: 'mem',
+    traits: { speed: 80, memory: 75, cpu: 15,  fault: 40 },
+    riskNote: ''
+  },
+  MEMORY_AND_DISK_SER: {
+    desc: 'Like MEMORY_AND_DISK but serialized in memory too. Smaller RAM footprint and serialization cost on every read — but better than recomputing.',
+    w1: { mem: ['p1', 'p2', 'p3', 'p4'], disk: [], recompute: [], serialized: true },
+    w2: { mem: ['p5', 'p6', 'p7', 'p8'], disk: [], recompute: [], serialized: true },
+    blockType: 'mem-ser',
+    traits: { speed: 55, memory: 50, cpu: 80,  fault: 50 },
+    riskNote: ''
+  },
+  DISK_ONLY: {
+    desc: 'Every partition goes to local disk. No RAM pressure at all, but every cache read pays disk I/O.',
+    w1: { mem: [], disk: ['p1', 'p2', 'p3', 'p4'], recompute: [] },
+    w2: { mem: [], disk: ['p5', 'p6', 'p7', 'p8'], recompute: [] },
+    blockType: 'disk',
+    traits: { speed: 25, memory: 0, cpu: 10,  fault: 80 },
+    riskNote: ''
+  },
+  MEMORY_AND_DISK_2: {
+    desc: 'Every partition stored on TWO workers. Doubles RAM cost but survives a worker dying — no recompute needed.',
+    w1: { mem: ['p1', 'p2', 'p3', 'p4'], disk: [], recompute: [], replicas: ['p5', 'p6', 'p7', 'p8'] },
+    w2: { mem: ['p5', 'p6', 'p7', 'p8'], disk: [], recompute: [], replicas: ['p1', 'p2', 'p3', 'p4'] },
+    blockType: 'mem',
+    traits: { speed: 80, memory: 100, cpu: 15,  fault: 100 },
+    riskNote: ''
+  },
+  OFF_HEAP: {
+    desc: 'Stored outside the JVM heap using Spark\'s Tungsten memory manager. Avoids garbage collection pauses on huge cached data.',
+    w1: { mem: ['p1', 'p2', 'p3', 'p4'], disk: [], recompute: [], offheap: true },
+    w2: { mem: ['p5', 'p6', 'p7', 'p8'], disk: [], recompute: [], offheap: true },
+    blockType: 'offheap',
+    traits: { speed: 70, memory: 75, cpu: 50,  fault: 25 },
+    riskNote: 'Requires spark.memory.offHeap.enabled=true. Rarely the right choice in practice.'
+  },
+};
+
+function renderStorageLevel() {
+  const profile = SL_PROFILES[STATE.slLevel];
+  ['w1', 'w2'].forEach((wkey, idx) => {
+    const w = profile[wkey];
+    const memC = $(wkey + 'Mem');
+    const diskC = $(wkey + 'Disk');
+    memC.innerHTML = '';
+    diskC.innerHTML = '';
+
+    // Fill 4 slots in RAM (some may be empty)
+    for (let i = 0; i < 4; i++) {
+      const b = document.createElement('div');
+      const part = w.mem[i];
+      b.className = 'sl-block';
+      if (part) {
+        b.classList.add(profile.blockType);
+        b.textContent = part;
+        if (w.replicas && w.replicas[i]) b.classList.add('replica');
+      } else {
+        b.classList.add('empty');
+        b.textContent = '';
+      }
+      memC.appendChild(b);
+    }
+
+    // Fill disk row (variable count, up to 4 visible slots)
+    const slots = Math.max(4, w.disk.length);
+    for (let i = 0; i < slots; i++) {
+      const b = document.createElement('div');
+      const part = w.disk[i];
+      b.className = 'sl-block';
+      if (part) {
+        b.classList.add('disk');
+        b.textContent = part;
+      } else {
+        b.classList.add('empty');
+        b.textContent = '';
+      }
+      diskC.appendChild(b);
+    }
+
+    const memCount = w.mem.length;
+    const diskCount = w.disk.length;
+    const repCount = w.replicas ? w.replicas.length : 0;
+    const summary = [];
+    if (memCount) summary.push(`${memCount} in RAM`);
+    if (diskCount) summary.push(`${diskCount} on disk`);
+    if (repCount) summary.push(`+${repCount} replicas`);
+    $(wkey + 'Summary').textContent = summary.join(' · ') || '—';
+  });
+
+  // Update trait bars
+  $('traitSpeed').style.width  = profile.traits.speed + '%';
+  $('traitMemory').style.width = profile.traits.memory + '%';
+  $('traitCpu').style.width    = profile.traits.cpu + '%';
+  $('traitFault').style.width  = profile.traits.fault + '%';
+
+  // Update active picker button
+  document.querySelectorAll('.sl-option').forEach(o => {
+    o.classList.toggle('active', o.dataset.level === STATE.slLevel);
+  });
+
+  // Update narration for this storage level
+  setNarrationForStorageLevel();
+}
+
+function setStorageLevel(level) {
+  STATE.slLevel = level;
+  renderStorageLevel();
+}
+
+function setNarrationForStorageLevel() {
+  const profile = SL_PROFILES[STATE.slLevel];
+  const verdict = ({
+    MEMORY_ONLY:         { title: 'Fastest, but fragile', body: 'No serialization overhead. But if memory pressure builds up, Spark drops blocks and recomputes them when needed. Used to be RDD\'s cache() default; rarely the right choice for DataFrames.' },
+    MEMORY_ONLY_SER:     { title: 'Compact RAM, CPU tax', body: 'Half the memory footprint, but every read deserializes. Worth it when you\'re memory-bound and CPU has headroom.' },
+    MEMORY_AND_DISK:     { title: 'The sensible default', body: 'DataFrame .cache() resolves to this. RAM first for speed, disk as fallback for safety. Cache hits never miss, just sometimes hit the slower medium.' },
+    MEMORY_AND_DISK_SER: { title: 'Maximum density', body: 'Smaller RAM footprint AND disk safety net. The CPU cost is real — serialize on write, deserialize on every read.' },
+    DISK_ONLY:           { title: 'Slow but predictable', body: 'No RAM pressure at all. Every cache hit pays disk I/O, but the disk is local SSD, so it\'s still much faster than re-scanning S3.' },
+    MEMORY_AND_DISK_2:   { title: 'Replicated for safety', body: 'Each partition lives on two workers. If one dies, the other serves the cache — no recompute. Doubles RAM cost.' },
+    OFF_HEAP:            { title: 'Specialist tool', body: 'Bypass the JVM heap entirely. Avoids GC pauses on huge cached datasets, but requires explicit config and serialization. Rarely the right call.' },
+  })[STATE.slLevel];
+
+  setNarration({
+    step: 'SCENARIO · 03 · ' + STATE.slLevel,
+    title: verdict.title,
+    body: `<p>${profile.desc}</p>
+           <p><strong>${verdict.title}.</strong> ${verdict.body}</p>
+           ${profile.riskNote ? `<p class="danger">${profile.riskNote}</p>` : ''}
+           <p>The bars on the right show relative tradeoffs: read speed (higher = faster), RAM used (higher = more), CPU cost (higher = more deserialization work), and fault tolerance (higher = safer).</p>`,
+    key: { title: 'How to choose', body: 'DataFrames? Stick with <code>.cache()</code> (= MEMORY_AND_DISK) unless you have a clear reason. Memory-constrained but lots of CPU? Try <code>MEMORY_AND_DISK_SER</code>. Critical pipeline that can\'t afford a worker failure? <code>MEMORY_AND_DISK_2</code>. Everything else is for specific situations you\'ll know you\'re in.' }
+  });
+}
+
+// =====================================================================
+// SCENARIO 4: THE UNPERSIST PATTERN
+// =====================================================================
+
+const UNP_STEPS = [
+  { text: 'df1 = read.parquet(...).cache()',  tag: 'cached',     mem: 50 },
+  { text: 'df1.count()  → materialize df1',   tag: 'cached',     mem: 50 },
+  { text: 'df2 = df1.groupBy().agg()',        tag: 'in-memory',  mem: 55 },
+  { text: 'df3 = df1.join(other)',            tag: 'in-memory',  mem: 60 },
+  { text: 'df2.write.parquet(...)',           tag: 'in-memory',  mem: 60 },
+  { text: 'df3.write.parquet(...)',           tag: 'in-memory',  mem: 60 },
+  { text: 'df1.unpersist()  ← cleanup',       tag: 'unpersist',  mem: 60 },  // diverges here
+  { text: 'df4 = read.parquet(...).cache()',  tag: 'cached',     mem: 60 },
+  { text: 'df4.count()  → materialize df4',   tag: 'cached',     mem: 60 },
+  { text: 'df4.join(otherBig).write(...)',    tag: 'in-memory',  mem: 60 },
+];
+
+function renderUnpTimelines() {
+  ['noUnpTimeline', 'withUnpTimeline'].forEach(id => {
+    const c = $(id);
+    c.innerHTML = '';
+    UNP_STEPS.forEach((s, idx) => {
+      const row = document.createElement('div');
+      row.className = 'unp-step';
+      row.dataset.idx = idx;
+      row.innerHTML = `
+        <div class="unp-step-num">${idx + 1}</div>
+        <div class="unp-step-text">${s.text}</div>
+        <div class="unp-step-tag">${s.tag}</div>
+      `;
+      c.appendChild(row);
+    });
+  });
+  $('noUnpMemFill').style.width = '0%';
+  $('noUnpMemFill').className = 'unp-memory-fill normal';
+  $('noUnpMemPct').textContent = '0%';
+  $('noUnpMemStatus').textContent = '—';
+  $('withUnpMemFill').style.width = '0%';
+  $('withUnpMemFill').className = 'unp-memory-fill normal';
+  $('withUnpMemPct').textContent = '0%';
+  $('withUnpMemStatus').textContent = '—';
+}
+
+async function runUnpersist() {
+  if (STATE.unpRunning) return;
+  STATE.unpRunning = true;
+  STATE.unpAbort = false;
+  setStatus('running', 'running');
+  renderUnpTimelines();
+
+  // Memory usage trajectory (% of storage memory cap, where cap=85% of bar)
+  //                              step:  0   1   2   3   4   5   6   7   8   9
+  const noUnpMem    = [             0, 30, 55, 55, 55, 55, 55,  80, 92, 92, 95 ];  // 92→ over cap, danger
+  const noUnpStatuses = [
+    '—',
+    'df1 cached',
+    'df1 in storage memory (55%)',
+    'df1 still cached — held for df2',
+    'df1 still cached — held for df3',
+    'df1 still cached — but no longer reused',
+    'df1 still cached, just sitting there',
+    '⚠ df1 still cached when df4 starts caching',
+    '⚠ over cap — Spark must LRU-evict df1 blocks',
+    '⚠ over cap — df4 partial, df1 partial',
+    '⚠ if df1 reused now, it would recompute',
+  ];
+
+  const withUnpMem  = [             0, 30, 55, 55, 55, 55, 55,  10, 35, 55, 55 ];   // unpersist drops it back
+  const withUnpStatuses = [
+    '—',
+    'df1 cached',
+    'df1 in storage memory (55%)',
+    'df1 still cached — held for df2',
+    'df1 still cached — held for df3',
+    'df1 done with df2.write',
+    'df1 done with df3.write',
+    '✓ df1 unpersisted — memory freed',
+    '✓ df4 caching into freed space',
+    '✓ df4 cached cleanly',
+    '✓ pipeline ends with df4 only',
+  ];
+
+  for (let i = 0; i < UNP_STEPS.length; i++) {
+    if (STATE.unpAbort) break;
+    const noRows   = $('noUnpTimeline').children;
+    const withRows = $('withUnpTimeline').children;
+
+    // Mark previous as done, this one as active
+    for (let j = 0; j < i; j++) {
+      noRows[j].classList.remove('active');   noRows[j].classList.add('done');
+      withRows[j].classList.remove('active'); withRows[j].classList.add('done');
+    }
+    // The unpersist step (index 6) only exists in the with-unp lane
+    if (i === 6) {
+      withRows[i].classList.add('active');
+      // No-unp lane: also "active" but show it as no-op via different tag
+      noRows[i].classList.add('active');
+      noRows[i].querySelector('.unp-step-text').textContent = '(skip unpersist)';
+      noRows[i].querySelector('.unp-step-tag').textContent  = 'no cleanup';
+      noRows[i].classList.add('recompute');
+    } else {
+      noRows[i].classList.add('active');
+      withRows[i].classList.add('active');
+    }
+
+    // Update memory fills
+    const memNo   = noUnpMem[i + 1];
+    const memWith = withUnpMem[i + 1];
+    $('noUnpMemFill').style.width   = memNo + '%';
+    $('withUnpMemFill').style.width = memWith + '%';
+    $('noUnpMemPct').textContent    = memNo + '%';
+    $('withUnpMemPct').textContent  = memWith + '%';
+    $('noUnpMemStatus').textContent   = noUnpStatuses[i + 1];
+    $('withUnpMemStatus').textContent = withUnpStatuses[i + 1];
+
+    // Color of the bar by zone (cap = 85%)
+    const noClass   = memNo   > 85 ? 'overflow' : (memNo   > 70 ? 'crowded' : 'normal');
+    const withClass = memWith > 85 ? 'overflow' : (memWith > 70 ? 'crowded' : 'normal');
+    $('noUnpMemFill').className   = 'unp-memory-fill ' + noClass;
+    $('withUnpMemFill').className = 'unp-memory-fill ' + withClass;
+
+    // Tag color in timeline
+    if (UNP_STEPS[i].tag === 'unpersist') {
+      withRows[i].classList.add('unpersist');
+    }
+
+    // When the no-unp lane hits the danger zone, mark its steps as recompute risk
+    if (memNo > 85) {
+      noRows[i].classList.add('evicted');
+      noRows[i].querySelector('.unp-step-tag').textContent = 'LRU evict!';
+    }
+
+    await sleep(900);
+  }
+
+  STATE.unpRunning = false;
+  if (STATE.unpAbort) {
+    setStatus('idle', 'idle');
+    return;
+  }
+  setStatus('done', 'idle');
+
+  setNarration({
+    step: 'SCENARIO · 04 · COMPLETE',
+    title: 'Unpersist is the cleanup the LRU eviction can\'t do well',
+    body: `<p>Both lanes ran the same pipeline. The right-hand lane (<span class="safe">with unpersist</span>) called <code>df1.unpersist()</code> as soon as df1 was no longer needed. Storage memory <strong>dropped from 55% to 10%</strong> — instant cleanup, exactly when it should happen.</p>
+           <p>The left-hand lane (<span class="danger">without unpersist</span>) kept df1 sitting in storage memory long after the pipeline was done with it. When df4 needed to cache, storage memory climbed past 85% (the cap) and Spark had to <span class="danger">LRU-evict df1's blocks</span> to make room. If anything had referenced df1 again at that point, it would have been <strong>silently recomputed</strong> — pulling from S3 all over again.</p>
+           <p>LRU eviction is the system's "least bad" response to memory pressure. <code>unpersist()</code> is your "right answer at the right time."</p>`,
+    key: { title: 'When to unpersist', body: 'Three triggers: (1) you\'re done with the cached DataFrame and want the memory back; (2) you\'re about to cache something more important and don\'t want LRU thrashing; (3) you\'re iterating in a notebook and want a clean state. The garbage collector won\'t do this for you — Spark holds onto cached blocks until you say otherwise.' }
+  });
+}
+
+function resetUnpersist() {
+  STATE.unpAbort = true;
+  STATE.unpRunning = false;
+  renderUnpTimelines();
+  setStatus('idle', 'idle');
+  setNarrationForScenario('unpersist');
+}
+
+// =====================================================================
+// Scenario switching + initial narration
+// =====================================================================
+
+function setNarrationForScenario(name) {
+  setStatus('idle', 'idle');
+  if (name === 'spill') {
+    $('scenarioTitle').textContent = 'The Spill';
+    $('scenarioSubtitle').textContent = 'Execution memory overflows during a shuffle';
+    setNarration({
+      step: 'SCENARIO · 01',
+      title: 'When the shuffle outgrows the heap',
+      body: `<p>Every Spark executor has a fixed amount of memory, split into two regions: <strong>storage</strong> (for cached data) and <strong>execution</strong> (for shuffles, joins, sorts, aggregations).</p>
+             <p>When a wide operation like <code>groupBy</code> needs more execution memory than the region holds, Spark doesn't crash. It <strong>spills</strong> the excess to local disk and keeps going.</p>
+             <p>Click <strong>Run query</strong> to watch a <code>GROUP BY</code> exceed the executor's execution region and start spilling.</p>`,
+      key: { title: 'The key idea', body: 'Spill never kills the job — it just makes it slower. Disk is ~250× slower than RAM (Part 0 established that). So spill-heavy queries finish, but they finish at disk speed instead of memory speed.' }
+    });
+  } else if (name === 'cache') {
+    $('scenarioTitle').textContent = 'Cache vs Persist';
+    $('scenarioSubtitle').textContent = 'Same DataFrame, three reuses — and what the keywords actually do';
+    setNarration({
+      step: 'SCENARIO · 02',
+      title: 'Same DataFrame, three reuses',
+      body: `<p>A common pattern: read a big DataFrame, filter and join it, then use it in <em>multiple</em> downstream actions. Without caching, every action triggers the full pipeline from scratch.</p>
+             <p><code>.cache()</code> and <code>.persist()</code> tell Spark "keep this around — I'll need it again." Both are <strong>lazy</strong>: they don't do anything until the first action triggers computation.</p>
+             <p>For DataFrames, <code>.cache()</code> is exactly equivalent to <code>.persist(MEMORY_AND_DISK)</code>. The only reason to use <code>persist()</code> directly is when you want a different storage level.</p>
+             <p>Click <strong>Run pipeline</strong> to race three lanes: no cache, .cache(), and .persist().</p>`,
+      key: { title: 'The key idea', body: 'Cache and persist are not magic. They\'re a deal you make with Spark: "I\'ll pay storage memory now, and you\'ll save me computation later." That trade is great when you reuse the data — and wasteful when you don\'t.' }
+    });
+  } else if (name === 'storage-level') {
+    $('scenarioTitle').textContent = 'Storage Levels';
+    $('scenarioSubtitle').textContent = 'Pick a level, see how Spark stores 8 partitions across 2 workers';
+    setNarrationForStorageLevel();
+  } else if (name === 'unpersist') {
+    $('scenarioTitle').textContent = 'The Unpersist Pattern';
+    $('scenarioSubtitle').textContent = 'Why cached DataFrames need explicit cleanup';
+    setNarration({
+      step: 'SCENARIO · 04',
+      title: 'Why unpersist matters',
+      body: `<p>Caching a DataFrame is a one-way street: Spark won't let go of those blocks until <em>you</em> tell it to (or until LRU eviction is forced).</p>
+             <p>In a long pipeline with multiple cached DataFrames, this matters. Without <code>unpersist()</code>, old cached data sits in storage memory long after it's needed, eating space that the next cache call wants.</p>
+             <p>Click <strong>Run pipeline</strong> to compare two versions of the same code: one calls <code>df1.unpersist()</code> when df1 is done, the other doesn't.</p>`,
+      key: { title: 'The key idea', body: 'Spark\'s LRU eviction is a safety net, not a strategy. <code>unpersist()</code> is the explicit, fast, predictable way to free storage memory — and it\'s the difference between a pipeline that scales and one that thrashes.' }
+    });
+  }
+}
+
+function switchScenario(name) {
+  STATE.scenario = name;
+  STATE.spillAbort = true;
+  STATE.cacheAbort = true;
+  STATE.unpAbort = true;
+  STATE.spillRunning = false;
+  STATE.cacheRunning = false;
+  STATE.unpRunning = false;
+  setTimeout(() => {
+    STATE.spillAbort = STATE.cacheAbort = STATE.unpAbort = false;
+  }, 120);
+
+  document.querySelectorAll('.scenario').forEach(s => s.classList.remove('active'));
+  $('scenario-' + name).classList.add('active');
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.scenario === name);
+  });
+  renderControls(name);
+  setNarrationForScenario(name);
+
+  if (name === 'spill')          renderSpillInitial();
+  else if (name === 'cache')     renderCacheLanes();
+  else if (name === 'storage-level') renderStorageLevel();
+  else if (name === 'unpersist') renderUnpTimelines();
+}
+
+function renderControls(name) {
+  const c = $('controls');
+  if (name === 'spill') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Watch shuffle data overflow execution memory and spill to disk.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset</button>
+        <button class="btn btn-primary" id="runBtn">▶ Run query</button>
+      </div>
+    `;
+    $('resetBtn').onclick = resetSpill;
+    $('runBtn').onclick   = runSpill;
+  } else if (name === 'cache') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Same pipeline, three caching strategies. Toggle DataFrame size on the canvas.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset</button>
+        <button class="btn btn-primary" id="runBtn">▶ Run pipeline</button>
+      </div>
+    `;
+    $('resetBtn').onclick = resetCacheLanes;
+    $('runBtn').onclick   = runCacheLanes;
+    $('sizeFits').onclick   = () => setCacheSize('fits');
+    $('sizeTooBig').onclick = () => setCacheSize('too-big');
+  } else if (name === 'storage-level') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Click any storage level on the left to see how it distributes your DataFrame.
+      </div>
+    `;
+    document.querySelectorAll('.sl-option').forEach(o => {
+      o.onclick = () => setStorageLevel(o.dataset.level);
+    });
+  } else if (name === 'unpersist') {
+    c.innerHTML = `
+      <div class="control-group" style="flex:1;color:var(--text-2);font-size:13px">
+        Two versions of the same pipeline. With and without explicit cleanup.
+      </div>
+      <div class="control-group">
+        <button class="btn" id="resetBtn">↺ Reset</button>
+        <button class="btn btn-primary" id="runBtn">▶ Run pipeline</button>
+      </div>
+    `;
+    $('resetBtn').onclick = resetUnpersist;
+    $('runBtn').onclick   = runUnpersist;
+  }
+}
+
+// =====================================================================
+// Init
+// =====================================================================
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => switchScenario(t.dataset.scenario));
+});
+
+switchScenario('spill');
+</script>
+</body>
+</html>
